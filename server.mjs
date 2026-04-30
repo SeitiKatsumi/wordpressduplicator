@@ -251,9 +251,9 @@ function validateRunConfig(config) {
   const sourceSsh = config?.source?.ssh || {};
   const target = config?.target || {};
   const targetSsh = target.ssh || {};
-  const sourceKeyPath = sourceSsh.keyPath || "";
+  const sourceKeyPath = sourceSsh.keyPath === "****" ? "" : sourceSsh.keyPath || "";
   const sourcePrivateKey = sourceSsh.privateKey || "";
-  const targetKeyPath = targetSsh.keyPath || "";
+  const targetKeyPath = targetSsh.keyPath === "****" ? "" : targetSsh.keyPath || "";
   const targetPrivateKey = targetSsh.privateKey || "";
 
   if (sourceKeyPath && !sourceKeyPath.startsWith("/") && !sourceKeyPath.startsWith("~")) {

@@ -134,7 +134,9 @@ function safeReuseConfig(config) {
   [
     ["source", "caprover", "password"],
     ["target", "caprover", "password"],
+    ["source", "ssh", "keyPath"],
     ["source", "ssh", "privateKey"],
+    ["target", "ssh", "keyPath"],
     ["target", "ssh", "privateKey"],
     ["database", "sourceRootPassword"],
     ["database", "targetRootPassword"],
@@ -159,7 +161,7 @@ function fillFormFromConfig(config) {
   set("sourceSshHost", source.ssh?.host);
   set("sourceSshUser", source.ssh?.user || "root");
   set("sourceSshPort", source.ssh?.port || 22);
-  set("sourceSshKey", source.ssh?.keyPath);
+  set("sourceSshKey", source.ssh?.keyPath === "****" ? "" : source.ssh?.keyPath);
   set("sourceSshPrivateKey", "");
   set("sourceCaproverUrl", source.caprover?.url);
   set("sourceCaproverPassword", "");
@@ -171,7 +173,7 @@ function fillFormFromConfig(config) {
   set("targetSshHost", target.ssh?.host);
   set("targetSshUser", target.ssh?.user || "root");
   set("targetSshPort", target.ssh?.port || 22);
-  set("targetSshKey", target.ssh?.keyPath);
+  set("targetSshKey", target.ssh?.keyPath === "****" ? "" : target.ssh?.keyPath);
   set("targetSshPrivateKey", "");
   set("targetCaproverUrl", target.caprover?.url);
   set("targetCaproverPassword", "");
@@ -198,13 +200,15 @@ function fillFormFromConfig(config) {
 
 function rawConfig() {
   const data = formData();
+  const sourceKeyPath = data.sourceSshKey === "****" ? "" : data.sourceSshKey || "";
+  const targetKeyPath = data.targetSshKey === "****" ? "" : data.targetSshKey || "";
   return {
     source: {
       ssh: {
         host: data.sourceSshHost,
         user: data.sourceSshUser || "root",
         port: Number(data.sourceSshPort || 22),
-        keyPath: data.sourceSshKey || "",
+        keyPath: sourceKeyPath,
         privateKey: data.sourceSshPrivateKey || "",
       },
       caprover: {
@@ -221,7 +225,7 @@ function rawConfig() {
         host: data.targetSshHost,
         user: data.targetSshUser || "root",
         port: Number(data.targetSshPort || 22),
-        keyPath: data.targetSshKey || "",
+        keyPath: targetKeyPath,
         privateKey: data.targetSshPrivateKey || "",
       },
       caprover: {
@@ -407,10 +411,10 @@ function validateRealRun(config) {
   const targetKeyPath = config.target.ssh.keyPath || "";
   const targetPrivateKey = config.target.ssh.privateKey || "";
 
-  if (sourceKeyPath && !sourceKeyPath.startsWith("/") && !sourceKeyPath.startsWith("~")) {
+  if (sourceKeyPath && sourceKeyPath !== "****" && !sourceKeyPath.startsWith("/") && !sourceKeyPath.startsWith("~")) {
     return "o campo Caminho da chave SSH origem precisa ser um caminho, como /data/ssh-keys/id_rsa. Para colar uma chave, use o campo Chave privada SSH completa.";
   }
-  if (targetKeyPath && !targetKeyPath.startsWith("/") && !targetKeyPath.startsWith("~")) {
+  if (targetKeyPath && targetKeyPath !== "****" && !targetKeyPath.startsWith("/") && !targetKeyPath.startsWith("~")) {
     return "o campo Caminho da chave SSH destino precisa ser um caminho, como /data/ssh-keys/id_rsa. Para colar uma chave, use o campo Chave privada SSH destino completa.";
   }
   if (sourcePrivateKey && !sourcePrivateKey.includes("PRIVATE KEY")) {
