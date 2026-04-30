@@ -479,6 +479,21 @@ def copy_files() -> None:
         cfg.target_ssh,
         f"docker exec {STATE.target.target_container} sh -lc {shlex.quote(f'mkdir -p {cfg.wp_path}')}",
     )
+
+    if same_ssh_target(cfg.source_ssh, cfg.target_ssh):
+        tmp_tar = f"/tmp/wpclone-{STATE.source.source_container[:8]}-{STATE.target.target_container[:8]}.tgz"
+        remote_script = (
+            "set -e; "
+            f"rm -f {shlex.quote(tmp_tar)}; "
+            f"docker exec {STATE.source.source_container} tar -C {shlex.quote(cfg.wp_path)} -czf - . > {shlex.quote(tmp_tar)}; "
+            f"test -s {shlex.quote(tmp_tar)}; "
+            f"cat {shlex.quote(tmp_tar)} | docker exec -i {STATE.target.target_container} tar -C {shlex.quote(cfg.wp_path)} -xzf -; "
+            f"rm -f {shlex.quote(tmp_tar)}"
+        )
+        log("+ copiar arquivos WordPress no mesmo host via tar temporario")
+        ssh(cfg.source_ssh, remote_script)
+        return
+
     src_cmd = cfg.source_ssh.base_cmd() + [
         f"docker exec {STATE.source.source_container} tar -C {shlex.quote(cfg.wp_path)} -czf - ."
     ]
@@ -496,6 +511,15 @@ def copy_files() -> None:
     rc1 = p1.wait()
     if rc1 != 0 or rc2 != 0:
         raise RuntimeError(f"Falha ao copiar arquivos: source_rc={rc1}, target_rc={rc2}")
+
+
+def same_ssh_target(left: SshTarget, right: SshTarget) -> bool:
+    return (
+        left.host == right.host
+        and left.user == right.user
+        and int(left.port) == int(right.port)
+        and (left.key_path or "") == (right.key_path or "")
+    )
 
 
 def generate_db_names() -> None:
