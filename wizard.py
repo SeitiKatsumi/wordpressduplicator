@@ -363,8 +363,16 @@ def discover_source() -> None:
 
 def wp_config_value(target: SshTarget, container: str, wp_path: str, key: str) -> str:
     php = (
-        "$c=file_get_contents(" + repr(f"{wp_path}/wp-config.php") + ");"
-        "if(preg_match('/define\\s*\\(\\s*[\"\\']" + key + "[\"\\']\\s*,\\s*[\"\\']([^\"\\']*)[\"\\']\\s*\\)/',$c,$m)) echo $m[1];"
+        "$file=" + repr(f"{wp_path}/wp-config.php") + ";"
+        "$c=file_get_contents($file);"
+        "if(preg_match('/define\\s*\\(\\s*[\"\\']" + key + "[\"\\']\\s*,\\s*[\"\\']([^\"\\']*)[\"\\']\\s*\\)/',$c,$m)){echo $m[1]; exit;}"
+        "$c=preg_replace('/require_once\\s*\\(?\\s*ABSPATH\\s*\\.\\s*[\"\\']wp-settings\\.php[\"\\']\\s*\\)?\\s*;?/','return;',$c);"
+        "$c=preg_replace('/^\\s*<\\?php/','',$c);"
+        "if(!defined('ABSPATH')) define('ABSPATH'," + repr(f"{wp_path}/") + ");"
+        "try{eval($c);}catch(Throwable $e){}"
+        "if(defined(" + repr(key) + ")){echo constant(" + repr(key) + "); exit;}"
+        "$map=['DB_NAME'=>'WORDPRESS_DB_NAME','DB_USER'=>'WORDPRESS_DB_USER','DB_PASSWORD'=>'WORDPRESS_DB_PASSWORD','DB_HOST'=>'WORDPRESS_DB_HOST'];"
+        "if(isset($map[" + repr(key) + "])) echo getenv($map[" + repr(key) + "]) ?: '';"
     )
     return ssh_text(target, f"docker exec {container} php -r {shlex.quote(php)}")
 
