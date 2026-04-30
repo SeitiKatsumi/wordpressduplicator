@@ -471,6 +471,14 @@ def wait_container(target: SshTarget, service: str, timeout: int = 180) -> str:
 def copy_files() -> None:
     cfg = STATE.config
     assert cfg
+    ssh(
+        cfg.source_ssh,
+        f"docker exec {STATE.source.source_container} sh -lc {shlex.quote(f'test -d {cfg.wp_path} && test -f {cfg.wp_path}/wp-config.php')}",
+    )
+    ssh(
+        cfg.target_ssh,
+        f"docker exec {STATE.target.target_container} sh -lc {shlex.quote(f'mkdir -p {cfg.wp_path}')}",
+    )
     src_cmd = cfg.source_ssh.base_cmd() + [
         f"docker exec {STATE.source.source_container} tar -C {shlex.quote(cfg.wp_path)} -czf - ."
     ]
