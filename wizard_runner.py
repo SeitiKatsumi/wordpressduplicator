@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -38,12 +39,15 @@ def build_config(raw: dict) -> wizard.CloneConfig:
     database = raw.get("database", {})
     execution = raw.get("execution", {})
 
+    source_key_path = prepare_ssh_key("source", value(source, "ssh", "privateKey"))
+    target_key_path = prepare_ssh_key("target", value(target, "ssh", "privateKey"))
+
     source_ssh = wizard.SshTarget(
         label="origem",
         host=value(source, "ssh", "host"),
         user=value(source, "ssh", "user", default="root"),
         port=int(value(source, "ssh", "port", default="22")),
-        key_path=value(source, "ssh", "keyPath"),
+        key_path=source_key_path or value(source, "ssh", "keyPath"),
     )
 
     target_ssh = source_ssh if boolean(target, "sameSsh", default=True) else wizard.SshTarget(
@@ -51,7 +55,7 @@ def build_config(raw: dict) -> wizard.CloneConfig:
         host=value(target, "ssh", "host"),
         user=value(target, "ssh", "user", default="root"),
         port=int(value(target, "ssh", "port", default="22")),
-        key_path=value(target, "ssh", "keyPath"),
+        key_path=target_key_path or value(target, "ssh", "keyPath"),
     )
 
     source_caprover = wizard.CapRoverTarget(
@@ -87,6 +91,18 @@ def build_config(raw: dict) -> wizard.CloneConfig:
     )
     wizard.validate_or_die(config)
     return config
+
+
+def prepare_ssh_key(label: str, private_key: str) -> str:
+    if not private_key.strip():
+        return ""
+    base = Path(os.environ.get("WORDPRESS_DUPLICATOR_DATA_DIR", "/data")) / "ssh-keys"
+    base.mkdir(parents=True, exist_ok=True)
+    path = base / f"{label}-{os.getpid()}.key"
+    normalized = private_key.replace("\\n", "\n").strip() + "\n"
+    path.write_text(normalized, encoding="utf-8")
+    path.chmod(0o600)
+    return str(path)
 
 
 def main() -> int:

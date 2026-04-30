@@ -124,6 +124,35 @@ async function listJobs(response) {
   json(response, 200, { ok: true, jobs: result.rows });
 }
 
+async function getJob(response, id) {
+  if (!pool || !dbReady) {
+    json(response, 503, { ok: false, error: dbError || "Postgres indisponivel" });
+    return;
+  }
+
+  const job = await pool.query(
+    `SELECT id, source_app, target_app, old_url, new_url, status, current_step,
+            dry_run, allow_existing_target, created_at, updated_at, started_at,
+            finished_at, error_message, report
+       FROM clone_jobs
+      WHERE id=$1`,
+    [id]
+  );
+  if (!job.rowCount) {
+    json(response, 404, { ok: false, error: "job nao encontrado" });
+    return;
+  }
+  const logs = await pool.query(
+    `SELECT level, message, metadata, created_at
+       FROM clone_job_logs
+      WHERE job_id=$1
+      ORDER BY created_at ASC, id ASC
+      LIMIT 500`,
+    [id]
+  );
+  json(response, 200, { ok: true, job: job.rows[0], logs: logs.rows });
+}
+
 async function createJob(request, response) {
   if (!pool || !dbReady) {
     json(response, 503, { ok: false, error: dbError || "Postgres indisponivel" });
@@ -178,7 +207,23 @@ async function createJob(request, response) {
   );
 
   if (body.run === true) {
-    await startJob(id, rawConfig);
+    if (execution.dryRun !== false) {
+      await pool.query(
+        `UPDATE clone_jobs
+            SET status='succeeded', current_step='dry_run_recorded',
+                started_at=COALESCE(started_at, now()), finished_at=now(), updated_at=now(),
+                report=$2
+          WHERE id=$1`,
+        [id, { mode: "dry-run", message: "Job registrado sem executar comandos remotos." }]
+      );
+      await pool.query(
+        `INSERT INTO clone_job_logs (job_id, level, message, metadata)
+         VALUES ($1, 'info', 'Dry-run registrado; nenhum comando remoto foi executado', '{}')`,
+        [id]
+      );
+    } else {
+      await startJob(id, rawConfig);
+    }
   }
 
   json(response, 201, { ok: true, id, running: body.run === true });
@@ -356,6 +401,12 @@ const server = http.createServer(async (request, response) => {
 
     if (url.pathname === "/api/jobs" && request.method === "POST") {
       await createJob(request, response);
+      return;
+    }
+
+    const jobMatch = url.pathname.match(/^\/api\/jobs\/([0-9a-f-]+)$/);
+    if (jobMatch && request.method === "GET") {
+      await getJob(response, jobMatch[1]);
       return;
     }
 

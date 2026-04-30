@@ -96,6 +96,10 @@
                     <span>Chave SSH</span>
                     <input name="sourceSshKey" placeholder="/home/user/.ssh/id_rsa" />
                   </label>
+                  <label class="field field--wide">
+                    <span>Chave privada SSH</span>
+                    <textarea name="sourceSshPrivateKey" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+                  </label>
                   <label class="field">
                     <span>CapRover URL</span>
                     <input name="sourceCaproverUrl" placeholder="https://captain.example.com" required />
@@ -180,6 +184,14 @@
                   <label class="field field--compact">
                     <span>Porta</span>
                     <input name="targetSshPort" type="number" min="1" max="65535" value="22" />
+                  </label>
+                  <label class="field">
+                    <span>Chave SSH destino</span>
+                    <input name="targetSshKey" placeholder="/home/user/.ssh/id_rsa" />
+                  </label>
+                  <label class="field field--wide">
+                    <span>Chave privada SSH destino</span>
+                    <textarea name="targetSshPrivateKey" placeholder="vazio = usar origem se mesmo SSH"></textarea>
                   </label>
                   <label class="field">
                     <span>CapRover destino</span>

@@ -170,6 +170,7 @@ Credenciais sensiveis devem ser criptografadas com `APP_SECRET_KEY` ou solicitad
 - Nao salvar senhas em texto puro.
 - Mascarar segredos em logs.
 - Usar chave SSH dedicada; senha SSH interativa nao funciona porque o executor usa `BatchMode=yes`.
+- Se rodar dentro do CapRover, cole a chave privada SSH na UI ou monte a chave no container e informe o caminho interno.
 - Validar primeiro com dry-run.
 - Bloquear destino existente por padrao.
 - Nunca escrever no banco original.

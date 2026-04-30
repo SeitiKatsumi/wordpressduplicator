@@ -21,6 +21,7 @@ const ctx = canvas.getContext("2d");
 let currentStep = 0;
 let progress = 0;
 let sweep = 0;
+let activeJobPoll = null;
 
 const scanMessages = {
   ssh: "SSH conectado",
@@ -77,6 +78,7 @@ function maskedConfig() {
         user: data.sourceSshUser,
         port: Number(data.sourceSshPort || 22),
         keyPath: data.sourceSshKey || "",
+        privateKey: data.sourceSshPrivateKey || "",
       },
       caprover: {
         url: data.sourceCaproverUrl,
@@ -92,6 +94,8 @@ function maskedConfig() {
         host: data.targetSshHost,
         user: data.targetSshUser,
         port: Number(data.targetSshPort || 22),
+        keyPath: data.targetSshKey || "",
+        privateKey: data.targetSshPrivateKey || "",
       },
       caprover: {
         url: data.targetCaproverUrl,
@@ -126,6 +130,7 @@ function rawConfig() {
         user: data.sourceSshUser,
         port: Number(data.sourceSshPort || 22),
         keyPath: data.sourceSshKey || "",
+        privateKey: data.sourceSshPrivateKey || "",
       },
       caprover: {
         url: data.sourceCaproverUrl,
@@ -142,6 +147,7 @@ function rawConfig() {
         user: data.targetSshUser,
         port: Number(data.targetSshPort || 22),
         keyPath: data.targetSshKey || "",
+        privateKey: data.targetSshPrivateKey || "",
       },
       caprover: {
         url: data.targetCaproverUrl,
@@ -233,7 +239,7 @@ async function loadJobs() {
     jobHistory.innerHTML = payload.jobs
       .map(
         (job) => `
-          <article class="history__item">
+          <article class="history__item" data-job-id="${job.id}">
             <small>${job.status}</small>
             <strong>${escapeHtml(job.source_app)} → ${escapeHtml(job.target_app)}</strong>
             <span>${escapeHtml(job.old_url)} → ${escapeHtml(job.new_url)}</span>
@@ -244,6 +250,27 @@ async function loadJobs() {
   } catch (error) {
     jobHistory.innerHTML = `<p>Histórico indisponível: ${escapeHtml(error.message)}</p>`;
   }
+}
+
+async function pollJob(id) {
+  window.clearInterval(activeJobPoll);
+  activeJobPoll = window.setInterval(async () => {
+    try {
+      const payload = await api(`/api/jobs/${id}`);
+      const job = payload.job;
+      const last = payload.logs.slice(-6).map((entry) => `[${entry.level}] ${entry.message}`);
+      consoleOutput.textContent = last.join("\n") || consoleOutput.textContent;
+      telemetryState.textContent = job.status.toUpperCase();
+      if (["succeeded", "failed", "cancelled"].includes(job.status)) {
+        window.clearInterval(activeJobPoll);
+        await loadJobs();
+        appendLog(`job ${job.status}: ${id}`);
+      }
+    } catch (error) {
+      appendLog(`falha ao acompanhar job: ${error.message}`);
+      window.clearInterval(activeJobPoll);
+    }
+  }, 3500);
 }
 
 async function saveJob() {
@@ -277,6 +304,7 @@ async function executeJob() {
     });
     appendLog(`execução real iniciada: ${payload.id}`);
     await loadJobs();
+    await pollJob(payload.id);
   } catch (error) {
     appendLog(`falha ao iniciar execução real: ${error.message}`);
   }
