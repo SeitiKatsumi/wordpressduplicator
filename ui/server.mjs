@@ -30,6 +30,6 @@ const server = http.createServer((request, response) => {
   createReadStream(filePath).pipe(response);
 });
 
-server.listen(port, "localhost", () => {
+server.listen(port, "0.0.0.0", () => {
   console.log(`WordPress Duplicator UI running at http://localhost:${port}/`);
 });

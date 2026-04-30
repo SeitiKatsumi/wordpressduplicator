@@ -162,9 +162,14 @@ Dentro do CapRover, a app escuta em:
 PORT=80
 ```
 
+Em `Configuracoes HTTP`, preencha tambem:
+
+```text
+Porta HTTP do Conteiner = 80
+```
+
 Localmente, a UI pode rodar em:
 
 ```bash
 PORT=3101 node ui/server.mjs
 ```
-
