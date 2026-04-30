@@ -513,6 +513,45 @@ input[type="checkbox"] {
   white-space: pre-wrap;
 }
 
+.history {
+  display: grid;
+  gap: 10px;
+  max-height: 260px;
+  overflow: auto;
+  padding: 12px;
+}
+
+.history p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.history__item {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid rgba(147, 161, 152, 0.18);
+  background: rgba(166, 255, 77, 0.045);
+}
+
+.history__item strong {
+  color: var(--text);
+  font-size: 13px;
+}
+
+.history__item span {
+  color: var(--muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.history__item small {
+  color: var(--amber);
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
 @media (max-width: 1040px) {
   .shell {
     grid-template-columns: 1fr;

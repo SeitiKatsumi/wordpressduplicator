@@ -297,9 +297,19 @@
             <section class="console" aria-label="Console">
               <header>
                 <span>Audit Log</span>
-                <strong>MASKED</strong>
+                <strong id="dbStatus">DB...</strong>
               </header>
               <pre id="consoleOutput">[standby] aguardando coordenadas da operação</pre>
+            </section>
+
+            <section class="console" aria-label="Historico">
+              <header>
+                <span>Histórico</span>
+                <strong>POSTGRES</strong>
+              </header>
+              <div class="history" id="jobHistory">
+                <p>Nenhuma execução carregada.</p>
+              </div>
             </section>
           </aside>
         </div>

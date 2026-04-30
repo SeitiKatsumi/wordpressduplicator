@@ -18,7 +18,8 @@ O modulo nao aponta DNS, nao adiciona dominio no CapRover e nao ativa HTTPS. Ess
 
 - `wizard.py`: fluxo interativo recomendado.
 - `wordpress-duplicator.sh`: executor Bash para cenarios simples no mesmo servidor.
-- `ui/`: interface futurista do wizard, pronta para conectar a um backend.
+- `ui/`: interface futurista do wizard integrada ao backend.
+- `server.mjs`: backend HTTP com Postgres, healthcheck, jobs e historico.
 - `Dockerfile`: imagem para deploy no CapRover.
 - `captain-definition`: definicao de deploy do CapRover.
 - `.env.example`: variaveis de ambiente recomendadas.
@@ -44,7 +45,7 @@ Resumo:
 6. Configure `Porta HTTP do Conteiner` como `3000`.
 7. Faca deploy usando `captain-definition`.
 
-O app Docker serve a UI web. A execucao real via UI deve ser conectada a um backend antes do uso em producao. O `wizard.py` ja contem o fluxo operacional CLI.
+O app Docker serve a UI web e conecta no Postgres para registrar jobs, historico e auditoria. O `wizard.py` contem o fluxo operacional CLI; a execucao destrutiva real continua bloqueada por `DRY_RUN_DEFAULT=true` ate ser explicitamente habilitada.
 
 ## Pre-requisitos locais
 
@@ -89,7 +90,7 @@ Abra o arquivo abaixo no navegador:
 wordpress-duplicator/ui/index.html
 ```
 
-A interface coleta os mesmos dados do wizard, simula as etapas de diagnostico/execucao e exporta um JSON mascarado. Ela nao executa SSH diretamente no navegador; a integracao segura deve ser feita por um backend local chamando `wizard.py`.
+A interface coleta os mesmos dados do wizard, registra execucoes no Postgres, mostra historico e exporta um JSON mascarado. Ela nao executa SSH diretamente no navegador.
 
 O wizard pergunta:
 

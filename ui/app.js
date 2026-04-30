@@ -7,6 +7,8 @@ const dryRunButton = document.querySelector("#toggleDryRun");
 const simulateButton = document.querySelector("#simulateRun");
 const form = document.querySelector("#wizardForm");
 const consoleOutput = document.querySelector("#consoleOutput");
+const dbStatus = document.querySelector("#dbStatus");
+const jobHistory = document.querySelector("#jobHistory");
 const progressValue = document.querySelector("#progressValue");
 const missionList = document.querySelector("#missionList");
 const telemetryMode = document.querySelector("#telemetryMode");
@@ -144,6 +146,76 @@ function exportConfig() {
   appendLog("configuração mascarada exportada");
 }
 
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    headers: { "content-type": "application/json", ...(options.headers || {}) },
+    ...options,
+  });
+  const payload = await response.json();
+  if (!response.ok || payload.ok === false) {
+    throw new Error(payload.error || `HTTP ${response.status}`);
+  }
+  return payload;
+}
+
+async function loadHealth() {
+  try {
+    const health = await api("/api/health");
+    dbStatus.textContent = health.postgres.ready ? "DB OK" : "DB OFF";
+    dbStatus.style.color = health.postgres.ready ? "var(--radar)" : "var(--amber)";
+    appendLog(health.postgres.ready ? "Postgres conectado" : "Postgres indisponível");
+  } catch (error) {
+    dbStatus.textContent = "DB OFF";
+    dbStatus.style.color = "var(--amber)";
+    appendLog(`Postgres indisponível: ${error.message}`);
+  }
+}
+
+async function loadJobs() {
+  try {
+    const payload = await api("/api/jobs");
+    if (!payload.jobs.length) {
+      jobHistory.innerHTML = "<p>Nenhuma execução registrada.</p>";
+      return;
+    }
+    jobHistory.innerHTML = payload.jobs
+      .map(
+        (job) => `
+          <article class="history__item">
+            <small>${job.status}</small>
+            <strong>${escapeHtml(job.source_app)} → ${escapeHtml(job.target_app)}</strong>
+            <span>${escapeHtml(job.old_url)} → ${escapeHtml(job.new_url)}</span>
+          </article>
+        `
+      )
+      .join("");
+  } catch (error) {
+    jobHistory.innerHTML = `<p>Histórico indisponível: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function saveJob() {
+  try {
+    const payload = await api("/api/jobs", {
+      method: "POST",
+      body: JSON.stringify({ config: maskedConfig() }),
+    });
+    appendLog(`job registrado no Postgres: ${payload.id}`);
+    await loadJobs();
+  } catch (error) {
+    appendLog(`falha ao registrar job: ${error.message}`);
+  }
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
 function simulateScan(button) {
   const scan = button.dataset.scan;
   const status = document.querySelector(`[data-status="${scan}"]`);
@@ -161,6 +233,7 @@ function simulateRun() {
   progressValue.textContent = "44%";
   telemetryState.textContent = "EXEC";
   appendLog("sequência de duplicação simulada iniciada");
+  saveJob();
 
   items.forEach((item, index) => {
     window.setTimeout(() => {
@@ -249,3 +322,5 @@ form.addEventListener("change", refreshPreview);
 setStep(0);
 refreshPreview();
 drawRadar();
+loadHealth();
+loadJobs();

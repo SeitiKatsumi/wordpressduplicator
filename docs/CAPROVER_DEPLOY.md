@@ -5,9 +5,11 @@ Este guia prepara o WordPress Duplicator para rodar como app Docker no CapRover.
 Estado atual:
 
 - a UI web roda no Docker;
+- o backend HTTP conecta no Postgres;
+- o schema Postgres para historico/auditoria e aplicado automaticamente no boot;
+- a UI registra jobs e carrega historico;
 - o wizard CLI existe em `wizard.py`;
-- o schema Postgres para historico/auditoria esta em `docs/postgres-schema.sql`;
-- a execucao SSH/CapRover via backend web ainda deve ser conectada antes de usar em producao pela UI.
+- execucao destrutiva real deve permanecer em dry-run ate validacao operacional.
 
 ## 1. Criar app Postgres
 
@@ -25,7 +27,7 @@ CREATE USER wordpressduplicator WITH PASSWORD 'troque-esta-senha';
 GRANT ALL PRIVILEGES ON DATABASE wordpressduplicator TO wordpressduplicator;
 ```
 
-Depois conecte no banco e aplique:
+O app aplica o schema automaticamente no boot. Se quiser aplicar manualmente:
 
 ```bash
 psql "$DATABASE_URL" -f docs/postgres-schema.sql
@@ -129,7 +131,28 @@ Se ainda assim decidir usar Docker socket, faca isso apenas em ambiente controla
 7. Execute em modo real.
 8. Adicione dominio e HTTPS manualmente no CapRover.
 
-## 6. Dados persistidos no Postgres
+## 6. Healthcheck
+
+Depois do deploy, abra:
+
+```text
+https://SEU-DOMINIO/api/health
+```
+
+Resultado esperado:
+
+```json
+{
+  "ok": true,
+  "postgres": {
+    "configured": true,
+    "ready": true,
+    "error": null
+  }
+}
+```
+
+## 7. Dados persistidos no Postgres
 
 O Postgres deve guardar:
 
@@ -142,7 +165,7 @@ O Postgres deve guardar:
 
 Credenciais sensiveis devem ser criptografadas com `APP_SECRET_KEY` ou solicitadas em tempo de execucao.
 
-## 7. Checklist de seguranca
+## 8. Checklist de seguranca
 
 - Nao salvar senhas em texto puro.
 - Mascarar segredos em logs.
@@ -154,7 +177,7 @@ Credenciais sensiveis devem ser criptografadas com `APP_SECRET_KEY` ou solicitad
 - Registrar cada checkpoint.
 - Permitir retomada apos falha.
 
-## 8. Portas
+## 9. Portas
 
 Dentro do CapRover, a app escuta em:
 

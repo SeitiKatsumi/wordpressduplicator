@@ -15,8 +15,10 @@ RUN apk add --no-cache \
   && npm install -g caprover
 
 COPY ui ./ui
-COPY wizard.py wordpress-duplicator.sh README.md ./
+COPY package.json server.mjs wizard.py wordpress-duplicator.sh README.md ./
 COPY docs ./docs
+
+RUN npm install --omit=dev
 
 ENV NODE_ENV=production
 ENV PORT=3000
@@ -26,8 +28,8 @@ RUN mkdir -p /data /app/.ssh \
   && chmod 700 /app/.ssh \
   && chmod +x /app/wordpress-duplicator.sh /app/wizard.py
 
-WORKDIR /app/ui
+WORKDIR /app
 
 EXPOSE 3000
 
-CMD ["node", "server.mjs"]
+CMD ["npm", "start"]

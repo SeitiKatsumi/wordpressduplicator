@@ -49,14 +49,15 @@ Responsabilidades:
 ## Fluxo futuro da UI com backend
 
 ```text
-UI -> Backend local -> Postgres
-               |
-               +-> SSH origem/destino
-               +-> CapRover API/CLI
-               +-> MySQL dump/restore
+UI -> Backend Node -> Postgres
+              |
+              +-> wizard.py / jobs operacionais
+              +-> SSH origem/destino
+              +-> CapRover API/CLI
+              +-> MySQL dump/restore
 ```
 
-O navegador nunca deve executar SSH diretamente e nunca deve receber segredos descriptografados depois que forem salvos.
+O navegador nunca executa SSH diretamente e nunca deve receber segredos descriptografados depois que forem salvos.
 
 ## Estados de uma execucao
 
@@ -113,4 +114,3 @@ Preferencia:
 1. pedir segredo na hora da execucao;
 2. salvar criptografado com `APP_SECRET_KEY`;
 3. salvar apenas referencia externa.
-
