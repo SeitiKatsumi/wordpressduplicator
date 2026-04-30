@@ -121,6 +121,81 @@ function maskedConfig() {
   };
 }
 
+function safeReuseConfig(config) {
+  const copy = structuredClone(config || {});
+  const clear = (obj, path) => {
+    let cur = obj;
+    for (const key of path.slice(0, -1)) {
+      if (!cur || typeof cur !== "object") return;
+      cur = cur[key];
+    }
+    if (cur && typeof cur === "object") cur[path.at(-1)] = "";
+  };
+  [
+    ["source", "caprover", "password"],
+    ["target", "caprover", "password"],
+    ["source", "ssh", "privateKey"],
+    ["target", "ssh", "privateKey"],
+    ["database", "sourceRootPassword"],
+    ["database", "targetRootPassword"],
+    ["database", "targetDbPassword"],
+  ].forEach((path) => clear(copy, path));
+  return copy;
+}
+
+function fillFormFromConfig(config) {
+  const source = config.source || {};
+  const target = config.target || {};
+  const database = config.database || {};
+  const execution = config.execution || {};
+
+  const set = (name, value = "") => {
+    if (form.elements[name]) form.elements[name].value = value || "";
+  };
+  const setChecked = (name, value) => {
+    if (form.elements[name]) form.elements[name].checked = Boolean(value);
+  };
+
+  set("sourceSshHost", source.ssh?.host);
+  set("sourceSshUser", source.ssh?.user || "root");
+  set("sourceSshPort", source.ssh?.port || 22);
+  set("sourceSshKey", source.ssh?.keyPath);
+  set("sourceSshPrivateKey", "");
+  set("sourceCaproverUrl", source.caprover?.url);
+  set("sourceCaproverPassword", "");
+  set("sourceApp", source.app);
+  set("oldUrl", source.url);
+
+  setChecked("sameSsh", target.sameSsh !== false);
+  setChecked("sameCaprover", target.sameCaprover !== false);
+  set("targetSshHost", target.ssh?.host);
+  set("targetSshUser", target.ssh?.user || "root");
+  set("targetSshPort", target.ssh?.port || 22);
+  set("targetSshKey", target.ssh?.keyPath);
+  set("targetSshPrivateKey", "");
+  set("targetCaproverUrl", target.caprover?.url);
+  set("targetCaproverPassword", "");
+  set("targetApp", target.app);
+  set("newUrl", target.url);
+  set("wpPath", target.wpPath || "/var/www/html");
+
+  set("sourceMysqlUser", database.sourceRootUser || "root");
+  set("sourceMysqlPassword", "");
+  set("targetMysqlApp", database.targetMysqlApp);
+  set("targetMysqlUser", database.targetRootUser || "root");
+  set("targetMysqlPassword", "");
+  set("targetDbName", database.targetDbName);
+  set("targetDbUser", database.targetDbUser);
+  set("targetDbPassword", "");
+
+  setChecked("dryRun", execution.dryRun !== false);
+  setChecked("allowExistingTarget", execution.allowExistingTarget);
+
+  refreshPreview();
+  setStep(0);
+  appendLog("configuração reaproveitada; recoloque senhas e chaves");
+}
+
 function rawConfig() {
   const data = formData();
   return {
@@ -243,10 +318,21 @@ async function loadJobs() {
             <small>${job.status}</small>
             <strong>${escapeHtml(job.source_app)} → ${escapeHtml(job.target_app)}</strong>
             <span>${escapeHtml(job.old_url)} → ${escapeHtml(job.new_url)}</span>
+            <button class="history__reuse" type="button" data-reuse-id="${job.id}">Reusar</button>
           </article>
         `
       )
       .join("");
+    for (const button of jobHistory.querySelectorAll("[data-reuse-id]")) {
+      button.addEventListener("click", () => {
+        const job = payload.jobs.find((item) => item.id === button.dataset.reuseId);
+        if (!job?.config_snapshot) {
+          appendLog("histórico sem configuração para reuso");
+          return;
+        }
+        fillFormFromConfig(safeReuseConfig(job.config_snapshot));
+      });
+    }
   } catch (error) {
     jobHistory.innerHTML = `<p>Histórico indisponível: ${escapeHtml(error.message)}</p>`;
   }

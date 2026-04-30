@@ -574,6 +574,17 @@ input[type="checkbox"] {
   text-transform: uppercase;
 }
 
+.history__reuse {
+  width: fit-content;
+  min-height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  color: var(--radar);
+  background: rgba(166, 255, 77, 0.08);
+  font-size: 12px;
+  font-weight: 850;
+}
+
 @media (max-width: 1040px) {
   .shell {
     grid-template-columns: 1fr;

@@ -116,7 +116,7 @@ async function listJobs(response) {
   const result = await pool.query(
     `SELECT id, source_app, target_app, old_url, new_url, status, current_step,
             dry_run, allow_existing_target, created_at, updated_at, started_at, finished_at,
-            error_message, report
+            error_message, report, config_snapshot
        FROM clone_jobs
       ORDER BY created_at DESC
       LIMIT 50`
