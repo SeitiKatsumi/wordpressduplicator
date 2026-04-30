@@ -45,7 +45,7 @@ Resumo:
 6. Configure `Porta HTTP do Conteiner` como `3000`.
 7. Faca deploy usando `captain-definition`.
 
-O app Docker serve a UI web e conecta no Postgres para registrar jobs, historico e auditoria. O `wizard.py` contem o fluxo operacional CLI; a execucao destrutiva real continua bloqueada por `DRY_RUN_DEFAULT=true` ate ser explicitamente habilitada.
+O app Docker serve a UI web, conecta no Postgres para registrar jobs/historico/auditoria e dispara o `wizard_runner.py` em background quando a clonagem real e confirmada na UI. A execucao real exige desativar dry-run e digitar `EXECUTAR`.
 
 ## Pre-requisitos locais
 
@@ -90,7 +90,7 @@ Abra o arquivo abaixo no navegador:
 wordpress-duplicator/ui/index.html
 ```
 
-A interface coleta os mesmos dados do wizard, registra execucoes no Postgres, mostra historico e exporta um JSON mascarado. Ela nao executa SSH diretamente no navegador.
+A interface coleta os mesmos dados do wizard, registra execucoes no Postgres, mostra historico e exporta um JSON mascarado. Ela nao executa SSH diretamente no navegador; a execucao real roda no backend.
 
 O wizard pergunta:
 

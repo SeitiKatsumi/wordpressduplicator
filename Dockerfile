@@ -15,7 +15,7 @@ RUN apk add --no-cache \
   && npm install -g caprover
 
 COPY ui ./ui
-COPY package.json server.mjs wizard.py wordpress-duplicator.sh README.md ./
+COPY package.json server.mjs wizard.py wizard_runner.py wordpress-duplicator.sh README.md ./
 COPY docs ./docs
 
 RUN npm install --omit=dev
@@ -26,7 +26,7 @@ ENV WORDPRESS_DUPLICATOR_DATA_DIR=/data
 
 RUN mkdir -p /data /app/.ssh \
   && chmod 700 /app/.ssh \
-  && chmod +x /app/wordpress-duplicator.sh /app/wizard.py
+  && chmod +x /app/wordpress-duplicator.sh /app/wizard.py /app/wizard_runner.py
 
 WORKDIR /app
 

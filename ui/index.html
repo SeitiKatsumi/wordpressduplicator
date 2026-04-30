@@ -186,6 +186,10 @@
                     <input name="targetCaproverUrl" placeholder="https://captain.example.com" />
                   </label>
                   <label class="field">
+                    <span>CapRover senha destino</span>
+                    <input name="targetCaproverPassword" type="password" />
+                  </label>
+                  <label class="field">
                     <span>Nova app</span>
                     <input name="targetApp" placeholder="wordpress-clone" required />
                   </label>
@@ -264,6 +268,7 @@
                     <span>Permitir destino existente</span>
                   </label>
                   <button class="launch-button" id="simulateRun" type="button">Simular execução</button>
+                  <button class="launch-button launch-button--danger" id="executeRun" type="button">Executar clonagem</button>
                 </div>
 
                 <ol class="mission-list" id="missionList">

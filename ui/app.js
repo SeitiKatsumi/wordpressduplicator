@@ -5,6 +5,7 @@ const nextButton = document.querySelector("#nextStep");
 const exportButton = document.querySelector("#exportConfig");
 const dryRunButton = document.querySelector("#toggleDryRun");
 const simulateButton = document.querySelector("#simulateRun");
+const executeButton = document.querySelector("#executeRun");
 const form = document.querySelector("#wizardForm");
 const consoleOutput = document.querySelector("#consoleOutput");
 const dbStatus = document.querySelector("#dbStatus");
@@ -94,6 +95,57 @@ function maskedConfig() {
       },
       caprover: {
         url: data.targetCaproverUrl,
+      },
+      app: data.targetApp,
+      url: data.newUrl,
+      wpPath: data.wpPath,
+    },
+    database: {
+      sourceRootUser: data.sourceMysqlUser,
+      sourceRootPassword: data.sourceMysqlPassword,
+      targetMysqlApp: data.targetMysqlApp,
+      targetRootUser: data.targetMysqlUser,
+      targetRootPassword: data.targetMysqlPassword,
+      targetDbName: data.targetDbName,
+      targetDbUser: data.targetDbUser,
+      targetDbPassword: data.targetDbPassword,
+    },
+    execution: {
+      dryRun: data.dryRun,
+      allowExistingTarget: data.allowExistingTarget,
+    },
+  };
+}
+
+function rawConfig() {
+  const data = formData();
+  return {
+    source: {
+      ssh: {
+        host: data.sourceSshHost,
+        user: data.sourceSshUser,
+        port: Number(data.sourceSshPort || 22),
+        keyPath: data.sourceSshKey || "",
+      },
+      caprover: {
+        url: data.sourceCaproverUrl,
+        password: data.sourceCaproverPassword,
+      },
+      app: data.sourceApp,
+      url: data.oldUrl,
+    },
+    target: {
+      sameSsh: data.sameSsh,
+      sameCaprover: data.sameCaprover,
+      ssh: {
+        host: data.targetSshHost,
+        user: data.targetSshUser,
+        port: Number(data.targetSshPort || 22),
+        keyPath: data.targetSshKey || "",
+      },
+      caprover: {
+        url: data.targetCaproverUrl,
+        password: data.sameCaprover ? data.sourceCaproverPassword : data.targetCaproverPassword,
       },
       app: data.targetApp,
       url: data.newUrl,
@@ -207,6 +259,29 @@ async function saveJob() {
   }
 }
 
+async function executeJob() {
+  const config = rawConfig();
+  if (config.execution.dryRun) {
+    appendLog("execução real bloqueada: desative Dry-run para clonar de verdade");
+    return;
+  }
+  const typed = window.prompt('Digite EXECUTAR para iniciar a clonagem real');
+  if (typed !== "EXECUTAR") {
+    appendLog("execução real cancelada");
+    return;
+  }
+  try {
+    const payload = await api("/api/jobs", {
+      method: "POST",
+      body: JSON.stringify({ config, run: true }),
+    });
+    appendLog(`execução real iniciada: ${payload.id}`);
+    await loadJobs();
+  } catch (error) {
+    appendLog(`falha ao iniciar execução real: ${error.message}`);
+  }
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -311,6 +386,7 @@ dryRunButton.addEventListener("click", () => {
   appendLog(`modo ${form.elements.dryRun.checked ? "dry-run" : "live"} selecionado`);
 });
 simulateButton.addEventListener("click", simulateRun);
+executeButton.addEventListener("click", executeJob);
 
 document.querySelectorAll(".scan-row").forEach((button) => {
   button.addEventListener("click", () => simulateScan(button));

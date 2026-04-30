@@ -8,8 +8,8 @@ Estado atual:
 - o backend HTTP conecta no Postgres;
 - o schema Postgres para historico/auditoria e aplicado automaticamente no boot;
 - a UI registra jobs e carrega historico;
-- o wizard CLI existe em `wizard.py`;
-- execucao destrutiva real deve permanecer em dry-run ate validacao operacional.
+- o backend dispara `wizard_runner.py` para executar clonagens reais;
+- execucao real exige desativar dry-run e confirmar digitando `EXECUTAR`.
 
 ## 1. Criar app Postgres
 
@@ -169,6 +169,8 @@ Credenciais sensiveis devem ser criptografadas com `APP_SECRET_KEY` ou solicitad
 
 - Nao salvar senhas em texto puro.
 - Mascarar segredos em logs.
+- Usar chave SSH dedicada; senha SSH interativa nao funciona porque o executor usa `BatchMode=yes`.
+- Validar primeiro com dry-run.
 - Bloquear destino existente por padrao.
 - Nunca escrever no banco original.
 - Nunca alterar arquivos da app original.

@@ -1,7 +1,8 @@
 import http from "node:http";
-import { createReadStream, existsSync, readFileSync } from "node:fs";
+import { createReadStream, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
 import pg from "pg";
 
 const { Pool } = pg;
@@ -11,6 +12,9 @@ const uiRoot = resolve("./ui");
 const port = Number(process.env.PORT || 3000);
 const databaseUrl = process.env.DATABASE_URL || "";
 const allowStoreSecrets = process.env.ALLOW_STORE_SECRETS === "true";
+const dataDir = process.env.WORDPRESS_DUPLICATOR_DATA_DIR || "/data";
+const jobTimeoutSeconds = Number(process.env.JOB_TIMEOUT_SECONDS || 7200);
+const runningJobs = new Map();
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
@@ -127,7 +131,8 @@ async function createJob(request, response) {
   }
 
   const body = await readBody(request);
-  const config = sanitize(body.config || {});
+  const rawConfig = body.config || {};
+  const config = sanitize(rawConfig);
   const source = config.source || {};
   const target = config.target || {};
   const execution = config.execution || {};
@@ -172,7 +177,121 @@ async function createJob(request, response) {
     [id, { sourceApp, targetApp }]
   );
 
-  json(response, 201, { ok: true, id });
+  if (body.run === true) {
+    await startJob(id, rawConfig);
+  }
+
+  json(response, 201, { ok: true, id, running: body.run === true });
+}
+
+async function startExistingJob(request, response, id) {
+  if (!pool || !dbReady) {
+    json(response, 503, { ok: false, error: dbError || "Postgres indisponivel" });
+    return;
+  }
+  const body = await readBody(request);
+  if (!body.config) {
+    json(response, 400, { ok: false, error: "config completa com segredos e obrigatoria para executar" });
+    return;
+  }
+  await startJob(id, body.config);
+  json(response, 202, { ok: true, id, running: true });
+}
+
+async function startJob(id, rawConfig) {
+  if (runningJobs.has(id)) return;
+
+  const jobDir = resolve(dataDir, "jobs", id);
+  mkdirSync(jobDir, { recursive: true });
+  const configPath = resolve(jobDir, "config.json");
+  writeFileSync(configPath, JSON.stringify({ jobId: id, config: rawConfig }, null, 2), { mode: 0o600 });
+
+  await pool.query(
+    `UPDATE clone_jobs
+        SET status='running', current_step='runner_started', started_at=COALESCE(started_at, now()), updated_at=now()
+      WHERE id=$1`,
+    [id]
+  );
+  await pool.query(
+    `INSERT INTO clone_job_logs (job_id, level, message, metadata)
+     VALUES ($1, 'info', 'Execucao real iniciada pelo backend', '{}')`,
+    [id]
+  );
+
+  const child = spawn("python3", [resolve(root, "wizard_runner.py"), configPath], {
+    cwd: root,
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  runningJobs.set(id, child);
+
+  const timeout = setTimeout(() => {
+    child.kill("SIGTERM");
+  }, jobTimeoutSeconds * 1000);
+
+  const logChunk = async (level, chunk) => {
+    const lines = chunk
+      .toString("utf-8")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    for (const line of lines) {
+      await pool.query(
+        `INSERT INTO clone_job_logs (job_id, level, message, metadata)
+         VALUES ($1, $2, $3, '{}')`,
+        [id, level, line.slice(0, 4000)]
+      );
+    }
+  };
+
+  child.stdout.on("data", (chunk) => {
+    logChunk("info", chunk).catch((error) => console.error(error));
+  });
+  child.stderr.on("data", (chunk) => {
+    logChunk("error", chunk).catch((error) => console.error(error));
+  });
+  child.on("exit", async (code, signal) => {
+    clearTimeout(timeout);
+    runningJobs.delete(id);
+    try {
+      unlinkSync(configPath);
+    } catch {
+      // Config contains execution secrets; best-effort cleanup after the runner starts.
+    }
+    const ok = code === 0;
+    const reportPath = resolve(jobDir, "wordpress-duplicator-report.json");
+    let report = {};
+    if (existsSync(reportPath)) {
+      try {
+        report = JSON.parse(readFileSync(reportPath, "utf-8"));
+      } catch {
+        report = {};
+      }
+    }
+    await pool.query(
+      `UPDATE clone_jobs
+          SET status=$2, current_step=$3, finished_at=now(), updated_at=now(),
+              error_message=$4, report=$5
+        WHERE id=$1`,
+      [
+        id,
+        ok ? "succeeded" : "failed",
+        ok ? "completed" : "failed",
+        ok ? null : `runner exited with code=${code} signal=${signal || ""}`,
+        report,
+      ]
+    );
+    await pool.query(
+      `INSERT INTO clone_job_logs (job_id, level, message, metadata)
+       VALUES ($1, $2, $3, $4)`,
+      [
+        id,
+        ok ? "info" : "error",
+        ok ? "Execucao concluida" : "Execucao falhou",
+        { code, signal },
+      ]
+    );
+  });
 }
 
 async function health(response) {
@@ -196,7 +315,7 @@ async function health(response) {
     postgres,
     env: {
       port,
-      dataDir: process.env.WORDPRESS_DUPLICATOR_DATA_DIR || "/data",
+      dataDir,
       dryRunDefault: process.env.DRY_RUN_DEFAULT !== "false",
       allowStoreSecrets,
     },
@@ -237,6 +356,12 @@ const server = http.createServer(async (request, response) => {
 
     if (url.pathname === "/api/jobs" && request.method === "POST") {
       await createJob(request, response);
+      return;
+    }
+
+    const runMatch = url.pathname.match(/^\/api\/jobs\/([0-9a-f-]+)\/run$/);
+    if (runMatch && request.method === "POST") {
+      await startExistingJob(request, response, runMatch[1]);
       return;
     }
 
