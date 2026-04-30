@@ -52,7 +52,7 @@ No CapRover:
 4. Configure as variaveis de ambiente:
 
 ```env
-PORT=80
+PORT=3000
 NODE_ENV=production
 WORDPRESS_DUPLICATOR_DATA_DIR=/data
 DATABASE_URL=postgresql://wordpressduplicator:troque-esta-senha@srv-captain--wordpress-duplicator-db:5432/wordpressduplicator
@@ -159,13 +159,13 @@ Credenciais sensiveis devem ser criptografadas com `APP_SECRET_KEY` ou solicitad
 Dentro do CapRover, a app escuta em:
 
 ```text
-PORT=80
+PORT=3000
 ```
 
 Em `Configuracoes HTTP`, preencha tambem:
 
 ```text
-Porta HTTP do Conteiner = 80
+Porta HTTP do Conteiner = 3000
 ```
 
 Localmente, a UI pode rodar em:

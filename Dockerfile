@@ -19,7 +19,7 @@ COPY wizard.py wordpress-duplicator.sh README.md ./
 COPY docs ./docs
 
 ENV NODE_ENV=production
-ENV PORT=80
+ENV PORT=3000
 ENV WORDPRESS_DUPLICATOR_DATA_DIR=/data
 
 RUN mkdir -p /data /app/.ssh \
@@ -28,6 +28,6 @@ RUN mkdir -p /data /app/.ssh \
 
 WORKDIR /app/ui
 
-EXPOSE 80
+EXPOSE 3000
 
 CMD ["node", "server.mjs"]

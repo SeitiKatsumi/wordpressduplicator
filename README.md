@@ -41,7 +41,8 @@ Resumo:
 3. Crie a app `wordpress-duplicator`.
 4. Ative persistent data em `/data`.
 5. Configure as envs de `.env.example`.
-6. Faca deploy usando `captain-definition`.
+6. Configure `Porta HTTP do Conteiner` como `3000`.
+7. Faca deploy usando `captain-definition`.
 
 O app Docker serve a UI web. A execucao real via UI deve ser conectada a um backend antes do uso em producao. O `wizard.py` ja contem o fluxo operacional CLI.
 
