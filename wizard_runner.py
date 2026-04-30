@@ -17,7 +17,8 @@ def value(data: dict, *keys: str, default: str = "") -> str:
         cur = cur.get(key)
     if cur is None:
         return default
-    return str(cur)
+    text = str(cur).strip()
+    return text if text else default
 
 
 def boolean(data: dict, *keys: str, default: bool = False) -> bool:

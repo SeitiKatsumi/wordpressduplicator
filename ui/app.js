@@ -75,7 +75,7 @@ function maskedConfig() {
     source: {
       ssh: {
         host: data.sourceSshHost,
-        user: data.sourceSshUser,
+        user: data.sourceSshUser || "root",
         port: Number(data.sourceSshPort || 22),
         keyPath: data.sourceSshKey || "",
         privateKey: data.sourceSshPrivateKey || "",
@@ -92,7 +92,7 @@ function maskedConfig() {
       sameCaprover: data.sameCaprover,
       ssh: {
         host: data.targetSshHost,
-        user: data.targetSshUser,
+        user: data.targetSshUser || "root",
         port: Number(data.targetSshPort || 22),
         keyPath: data.targetSshKey || "",
         privateKey: data.targetSshPrivateKey || "",
@@ -127,7 +127,7 @@ function rawConfig() {
     source: {
       ssh: {
         host: data.sourceSshHost,
-        user: data.sourceSshUser,
+        user: data.sourceSshUser || "root",
         port: Number(data.sourceSshPort || 22),
         keyPath: data.sourceSshKey || "",
         privateKey: data.sourceSshPrivateKey || "",
@@ -144,7 +144,7 @@ function rawConfig() {
       sameCaprover: data.sameCaprover,
       ssh: {
         host: data.targetSshHost,
-        user: data.targetSshUser,
+        user: data.targetSshUser || "root",
         port: Number(data.targetSshPort || 22),
         keyPath: data.targetSshKey || "",
         privateKey: data.targetSshPrivateKey || "",
