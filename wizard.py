@@ -483,10 +483,12 @@ def copy_files() -> None:
     if same_ssh_target(cfg.source_ssh, cfg.target_ssh):
         tmp_tar = f"/tmp/wpclone-{STATE.source.source_container[:8]}-{STATE.target.target_container[:8]}.tgz"
         remote_script = (
-            "set -e; "
+            "set -euo pipefail; "
             f"rm -f {shlex.quote(tmp_tar)}; "
-            f"docker exec {STATE.source.source_container} tar -C {shlex.quote(cfg.wp_path)} -czf - . > {shlex.quote(tmp_tar)}; "
-            f"test -s {shlex.quote(tmp_tar)}; "
+            f"docker exec {STATE.source.source_container} sh -lc {shlex.quote(f'pwd; ls -la {cfg.wp_path}; test -f {cfg.wp_path}/wp-config.php')}; "
+            f"docker exec {STATE.source.source_container} sh -lc {shlex.quote(f'tar -C {cfg.wp_path} -czf - .')} > {shlex.quote(tmp_tar)}; "
+            f"if ! test -s {shlex.quote(tmp_tar)}; then echo 'Arquivo tar temporario vazio: {tmp_tar}' >&2; exit 44; fi; "
+            f"docker exec {STATE.target.target_container} sh -lc {shlex.quote(f'mkdir -p {cfg.wp_path}; test -d {cfg.wp_path}')}; "
             f"cat {shlex.quote(tmp_tar)} | docker exec -i {STATE.target.target_container} tar -C {shlex.quote(cfg.wp_path)} -xzf -; "
             f"rm -f {shlex.quote(tmp_tar)}"
         )
