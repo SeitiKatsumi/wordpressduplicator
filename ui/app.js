@@ -288,6 +288,11 @@ async function saveJob() {
 
 async function executeJob() {
   const config = rawConfig();
+  const validationError = validateRealRun(config);
+  if (validationError) {
+    appendLog(`execução real bloqueada: ${validationError}`);
+    return;
+  }
   if (config.execution.dryRun) {
     appendLog("execução real bloqueada: desative Dry-run para clonar de verdade");
     return;
@@ -308,6 +313,30 @@ async function executeJob() {
   } catch (error) {
     appendLog(`falha ao iniciar execução real: ${error.message}`);
   }
+}
+
+function validateRealRun(config) {
+  const sourceKeyPath = config.source.ssh.keyPath || "";
+  const sourcePrivateKey = config.source.ssh.privateKey || "";
+  const targetKeyPath = config.target.ssh.keyPath || "";
+  const targetPrivateKey = config.target.ssh.privateKey || "";
+
+  if (sourceKeyPath && !sourceKeyPath.startsWith("/") && !sourceKeyPath.startsWith("~")) {
+    return "o campo Caminho da chave SSH origem precisa ser um caminho, como /data/ssh-keys/id_rsa. Para colar uma chave, use o campo Chave privada SSH completa.";
+  }
+  if (targetKeyPath && !targetKeyPath.startsWith("/") && !targetKeyPath.startsWith("~")) {
+    return "o campo Caminho da chave SSH destino precisa ser um caminho, como /data/ssh-keys/id_rsa. Para colar uma chave, use o campo Chave privada SSH destino completa.";
+  }
+  if (sourcePrivateKey && !sourcePrivateKey.includes("PRIVATE KEY")) {
+    return "a chave privada SSH origem parece incompleta. Ela deve conter BEGIN/END PRIVATE KEY.";
+  }
+  if (!config.target.sameSsh && targetPrivateKey && !targetPrivateKey.includes("PRIVATE KEY")) {
+    return "a chave privada SSH destino parece incompleta. Ela deve conter BEGIN/END PRIVATE KEY.";
+  }
+  if (!sourceKeyPath && !sourcePrivateKey) {
+    return "informe uma chave privada SSH origem completa ou um caminho de chave existente dentro do container.";
+  }
+  return "";
 }
 
 function escapeHtml(value) {

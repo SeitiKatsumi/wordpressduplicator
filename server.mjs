@@ -207,6 +207,24 @@ async function createJob(request, response) {
   );
 
   if (body.run === true) {
+    const validationError = validateRunConfig(rawConfig);
+    if (validationError) {
+      await pool.query(
+        `UPDATE clone_jobs
+            SET status='failed', current_step='validation_failed',
+                started_at=COALESCE(started_at, now()), finished_at=now(), updated_at=now(),
+                error_message=$2
+          WHERE id=$1`,
+        [id, validationError]
+      );
+      await pool.query(
+        `INSERT INTO clone_job_logs (job_id, level, message, metadata)
+         VALUES ($1, 'error', $2, '{}')`,
+        [id, validationError]
+      );
+      json(response, 400, { ok: false, id, error: validationError });
+      return;
+    }
     if (execution.dryRun !== false) {
       await pool.query(
         `UPDATE clone_jobs
@@ -227,6 +245,33 @@ async function createJob(request, response) {
   }
 
   json(response, 201, { ok: true, id, running: body.run === true });
+}
+
+function validateRunConfig(config) {
+  const sourceSsh = config?.source?.ssh || {};
+  const target = config?.target || {};
+  const targetSsh = target.ssh || {};
+  const sourceKeyPath = sourceSsh.keyPath || "";
+  const sourcePrivateKey = sourceSsh.privateKey || "";
+  const targetKeyPath = targetSsh.keyPath || "";
+  const targetPrivateKey = targetSsh.privateKey || "";
+
+  if (sourceKeyPath && !sourceKeyPath.startsWith("/") && !sourceKeyPath.startsWith("~")) {
+    return "Caminho da chave SSH origem invalido. Use um caminho dentro do container, como /data/ssh-keys/id_rsa, ou cole a chave no campo de chave privada.";
+  }
+  if (targetKeyPath && !targetKeyPath.startsWith("/") && !targetKeyPath.startsWith("~")) {
+    return "Caminho da chave SSH destino invalido. Use um caminho dentro do container, como /data/ssh-keys/id_rsa, ou cole a chave no campo de chave privada.";
+  }
+  if (sourcePrivateKey && !sourcePrivateKey.includes("PRIVATE KEY")) {
+    return "Chave privada SSH origem invalida ou incompleta.";
+  }
+  if (!target.sameSsh && targetPrivateKey && !targetPrivateKey.includes("PRIVATE KEY")) {
+    return "Chave privada SSH destino invalida ou incompleta.";
+  }
+  if (!sourceKeyPath && !sourcePrivateKey) {
+    return "Informe uma chave privada SSH origem completa ou um caminho de chave existente dentro do container.";
+  }
+  return "";
 }
 
 async function startExistingJob(request, response, id) {

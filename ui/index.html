@@ -93,12 +93,12 @@
                     <input name="sourceSshPort" type="number" min="1" max="65535" value="22" required />
                   </label>
                   <label class="field">
-                    <span>Chave SSH</span>
-                    <input name="sourceSshKey" placeholder="/home/user/.ssh/id_rsa" />
+                    <span>Caminho da chave SSH no container</span>
+                    <input name="sourceSshKey" placeholder="/data/ssh-keys/id_rsa" />
                   </label>
                   <label class="field field--wide">
-                    <span>Chave privada SSH</span>
-                    <textarea name="sourceSshPrivateKey" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea>
+                    <span>Chave privada SSH completa</span>
+                    <textarea name="sourceSshPrivateKey" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"></textarea>
                   </label>
                   <label class="field">
                     <span>CapRover URL</span>
@@ -186,11 +186,11 @@
                     <input name="targetSshPort" type="number" min="1" max="65535" value="22" />
                   </label>
                   <label class="field">
-                    <span>Chave SSH destino</span>
-                    <input name="targetSshKey" placeholder="/home/user/.ssh/id_rsa" />
+                    <span>Caminho da chave SSH destino</span>
+                    <input name="targetSshKey" placeholder="/data/ssh-keys/id_rsa" />
                   </label>
                   <label class="field field--wide">
-                    <span>Chave privada SSH destino</span>
+                    <span>Chave privada SSH destino completa</span>
                     <textarea name="targetSshPrivateKey" placeholder="vazio = usar origem se mesmo SSH"></textarea>
                   </label>
                   <label class="field">
