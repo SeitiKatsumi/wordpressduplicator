@@ -482,15 +482,29 @@ def copy_files() -> None:
 
     if same_ssh_target(cfg.source_ssh, cfg.target_ssh):
         tmp_tar = f"/tmp/wpclone-{STATE.source.source_container[:8]}-{STATE.target.target_container[:8]}.tgz"
+        tmp_dir = f"/tmp/wpclone-{STATE.source.source_container[:8]}-{STATE.target.target_container[:8]}-files"
+        clean_target = f"find {shlex.quote(cfg.wp_path)} -mindepth 1 -maxdepth 1 -exec rm -rf {{}} +"
         remote_script = (
-            "set -euo pipefail; "
+            "set -uo pipefail; "
             f"rm -f {shlex.quote(tmp_tar)}; "
-            f"docker exec {STATE.source.source_container} sh -lc {shlex.quote(f'pwd; ls -la {cfg.wp_path}; test -f {cfg.wp_path}/wp-config.php')}; "
-            f"docker exec {STATE.source.source_container} sh -lc {shlex.quote(f'tar -C {cfg.wp_path} -czf - .')} > {shlex.quote(tmp_tar)}; "
-            f"if ! test -s {shlex.quote(tmp_tar)}; then echo 'Arquivo tar temporario vazio: {tmp_tar}' >&2; exit 44; fi; "
-            f"docker exec {STATE.target.target_container} sh -lc {shlex.quote(f'mkdir -p {cfg.wp_path}; test -d {cfg.wp_path}')}; "
-            f"cat {shlex.quote(tmp_tar)} | docker exec -i {STATE.target.target_container} tar -C {shlex.quote(cfg.wp_path)} -xzf -; "
-            f"rm -f {shlex.quote(tmp_tar)}"
+            f"rm -rf {shlex.quote(tmp_dir)}; "
+            f"docker exec {STATE.source.source_container} sh -lc {shlex.quote(f'pwd; ls -la {cfg.wp_path}; test -f {cfg.wp_path}/wp-config.php')} || exit 41; "
+            "tar_rc=0; "
+            f"docker exec {STATE.source.source_container} sh -lc {shlex.quote(f'tar --warning=no-file-changed --ignore-failed-read -C {cfg.wp_path} -czf - .')} > {shlex.quote(tmp_tar)} || tar_rc=$?; "
+            f"docker exec {STATE.target.target_container} sh -lc {shlex.quote(f'mkdir -p {cfg.wp_path}; test -d {cfg.wp_path}')} || exit 45; "
+            "extract_rc=0; "
+            f"if [ \"$tar_rc\" -le 1 ] && test -s {shlex.quote(tmp_tar)}; then "
+            f"docker exec {STATE.target.target_container} sh -lc {shlex.quote(clean_target)} || exit 46; "
+            f"cat {shlex.quote(tmp_tar)} | docker exec -i {STATE.target.target_container} tar -C {shlex.quote(cfg.wp_path)} -xzf - || extract_rc=$?; "
+            "else extract_rc=91; fi; "
+            "if [ \"$extract_rc\" -ne 0 ]; then "
+            "echo \"tar falhou; tentando fallback docker cp (tar_rc=$tar_rc extract_rc=$extract_rc)\" >&2; "
+            f"rm -rf {shlex.quote(tmp_dir)}; mkdir -p {shlex.quote(tmp_dir)} || exit 92; "
+            f"docker cp {STATE.source.source_container}:{shlex.quote(cfg.wp_path)}/. {shlex.quote(tmp_dir)}/ || exit 93; "
+            f"docker exec {STATE.target.target_container} sh -lc {shlex.quote(clean_target)} || exit 94; "
+            f"docker cp {shlex.quote(tmp_dir)}/. {STATE.target.target_container}:{shlex.quote(cfg.wp_path)}/ || exit 95; "
+            "fi; "
+            f"rm -f {shlex.quote(tmp_tar)}; rm -rf {shlex.quote(tmp_dir)}"
         )
         log("+ copiar arquivos WordPress no mesmo host via tar temporario")
         ssh(cfg.source_ssh, remote_script)
