@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WordPress Duplicator</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <aside class="rail" aria-label="Etapas do wizard">
+        <div class="mark">
+          <span class="mark__sigil">3K11</span>
+          <span class="mark__name">APS</span>
+        </div>
+
+        <nav class="steps" id="steps">
+          <button class="step is-active" type="button" data-step="0">
+            <span class="step__index">01</span>
+            <span class="step__label">Origem</span>
+          </button>
+          <button class="step" type="button" data-step="1">
+            <span class="step__index">02</span>
+            <span class="step__label">Diagnóstico</span>
+          </button>
+          <button class="step" type="button" data-step="2">
+            <span class="step__index">03</span>
+            <span class="step__label">Destino</span>
+          </button>
+          <button class="step" type="button" data-step="3">
+            <span class="step__index">04</span>
+            <span class="step__label">Banco</span>
+          </button>
+          <button class="step" type="button" data-step="4">
+            <span class="step__index">05</span>
+            <span class="step__label">Execução</span>
+          </button>
+        </nav>
+
+        <section class="telemetry" aria-label="Telemetria">
+          <div>
+            <span>Modo</span>
+            <strong id="telemetryMode">DRY</strong>
+          </div>
+          <div>
+            <span>Risco</span>
+            <strong id="telemetryRisk">BAIXO</strong>
+          </div>
+          <div>
+            <span>Estado</span>
+            <strong id="telemetryState">PRONTO</strong>
+          </div>
+        </section>
+      </aside>
+
+      <section class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">WordPress Duplicator</p>
+            <h1>Clone operacional CapRover</h1>
+          </div>
+          <div class="actions">
+            <button class="icon-button" id="toggleDryRun" type="button" aria-label="Alternar dry-run" title="Alternar dry-run">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 0 1 13.7-5.7M20 12a8 8 0 0 1-13.7 5.7"/><path d="M17 3v4h-4M7 21v-4h4"/></svg>
+            </button>
+            <button class="command-button" id="exportConfig" type="button">Exportar JSON</button>
+          </div>
+        </header>
+
+        <div class="grid">
+          <section class="panel panel--primary">
+            <form id="wizardForm" autocomplete="off">
+              <div class="screen is-active" data-screen="0">
+                <div class="screen__header">
+                  <span class="beacon"></span>
+                  <div>
+                    <p class="section-kicker">Origem</p>
+                    <h2>Instância usada para clonagem</h2>
+                  </div>
+                </div>
+
+                <div class="field-grid">
+                  <label class="field">
+                    <span>SSH host</span>
+                    <input name="sourceSshHost" placeholder="203.0.113.10" required />
+                  </label>
+                  <label class="field">
+                    <span>SSH usuário</span>
+                    <input name="sourceSshUser" value="root" required />
+                  </label>
+                  <label class="field field--compact">
+                    <span>Porta</span>
+                    <input name="sourceSshPort" type="number" min="1" max="65535" value="22" required />
+                  </label>
+                  <label class="field">
+                    <span>Chave SSH</span>
+                    <input name="sourceSshKey" placeholder="/home/user/.ssh/id_rsa" />
+                  </label>
+                  <label class="field">
+                    <span>CapRover URL</span>
+                    <input name="sourceCaproverUrl" placeholder="https://captain.example.com" required />
+                  </label>
+                  <label class="field">
+                    <span>CapRover senha</span>
+                    <input name="sourceCaproverPassword" type="password" required />
+                  </label>
+                  <label class="field">
+                    <span>App WordPress origem</span>
+                    <input name="sourceApp" placeholder="wordpress-prod" required />
+                  </label>
+                  <label class="field">
+                    <span>URL atual</span>
+                    <input name="oldUrl" placeholder="https://site-antigo.com" required />
+                  </label>
+                </div>
+              </div>
+
+              <div class="screen" data-screen="1">
+                <div class="screen__header">
+                  <span class="beacon"></span>
+                  <div>
+                    <p class="section-kicker">Diagnóstico</p>
+                    <h2>Verificações da origem</h2>
+                  </div>
+                </div>
+
+                <div class="scan-list">
+                  <button class="scan-row" type="button" data-scan="ssh">
+                    <span>SSH</span>
+                    <strong data-status="ssh">Pendente</strong>
+                  </button>
+                  <button class="scan-row" type="button" data-scan="caprover">
+                    <span>CapRover</span>
+                    <strong data-status="caprover">Pendente</strong>
+                  </button>
+                  <button class="scan-row" type="button" data-scan="wordpress">
+                    <span>WordPress</span>
+                    <strong data-status="wordpress">Pendente</strong>
+                  </button>
+                  <button class="scan-row" type="button" data-scan="mysql">
+                    <span>MySQL</span>
+                    <strong data-status="mysql">Pendente</strong>
+                  </button>
+                  <button class="scan-row" type="button" data-scan="volumes">
+                    <span>Volumes</span>
+                    <strong data-status="volumes">Pendente</strong>
+                  </button>
+                </div>
+
+                <div class="discovery">
+                  <div><span>Imagem</span><strong id="imagePreview">wordpress:detect</strong></div>
+                  <div><span>DB host</span><strong id="dbHostPreview">srv-captain--mysql</strong></div>
+                  <div><span>Volume</span><strong id="volumePreview">/var/www/html</strong></div>
+                </div>
+              </div>
+
+              <div class="screen" data-screen="2">
+                <div class="screen__header">
+                  <span class="beacon"></span>
+                  <div>
+                    <p class="section-kicker">Destino</p>
+                    <h2>Nova aplicação CapRover</h2>
+                  </div>
+                </div>
+
+                <div class="switch-row">
+                  <label><input type="checkbox" name="sameSsh" checked /> Mesmo SSH da origem</label>
+                  <label><input type="checkbox" name="sameCaprover" checked /> Mesmo CapRover da origem</label>
+                </div>
+
+                <div class="field-grid">
+                  <label class="field">
+                    <span>SSH host destino</span>
+                    <input name="targetSshHost" placeholder="203.0.113.10" />
+                  </label>
+                  <label class="field">
+                    <span>SSH usuário destino</span>
+                    <input name="targetSshUser" value="root" />
+                  </label>
+                  <label class="field field--compact">
+                    <span>Porta</span>
+                    <input name="targetSshPort" type="number" min="1" max="65535" value="22" />
+                  </label>
+                  <label class="field">
+                    <span>CapRover destino</span>
+                    <input name="targetCaproverUrl" placeholder="https://captain.example.com" />
+                  </label>
+                  <label class="field">
+                    <span>Nova app</span>
+                    <input name="targetApp" placeholder="wordpress-clone" required />
+                  </label>
+                  <label class="field">
+                    <span>Nova URL</span>
+                    <input name="newUrl" placeholder="https://site-novo.com" required />
+                  </label>
+                  <label class="field">
+                    <span>WP path</span>
+                    <input name="wpPath" value="/var/www/html" required />
+                  </label>
+                </div>
+              </div>
+
+              <div class="screen" data-screen="3">
+                <div class="screen__header">
+                  <span class="beacon"></span>
+                  <div>
+                    <p class="section-kicker">Banco</p>
+                    <h2>Duplicação MySQL</h2>
+                  </div>
+                </div>
+
+                <div class="field-grid">
+                  <label class="field">
+                    <span>MySQL root origem</span>
+                    <input name="sourceMysqlUser" value="root" required />
+                  </label>
+                  <label class="field">
+                    <span>Senha MySQL origem</span>
+                    <input name="sourceMysqlPassword" type="password" required />
+                  </label>
+                  <label class="field">
+                    <span>App MySQL destino</span>
+                    <input name="targetMysqlApp" placeholder="vazio = detectar" />
+                  </label>
+                  <label class="field">
+                    <span>MySQL root destino</span>
+                    <input name="targetMysqlUser" value="root" required />
+                  </label>
+                  <label class="field">
+                    <span>Senha MySQL destino</span>
+                    <input name="targetMysqlPassword" type="password" required />
+                  </label>
+                  <label class="field">
+                    <span>Novo banco</span>
+                    <input name="targetDbName" placeholder="gerado automaticamente" />
+                  </label>
+                  <label class="field">
+                    <span>Novo usuário</span>
+                    <input name="targetDbUser" placeholder="gerado automaticamente" />
+                  </label>
+                  <label class="field">
+                    <span>Nova senha</span>
+                    <input name="targetDbPassword" type="password" placeholder="gerada automaticamente" />
+                  </label>
+                </div>
+              </div>
+
+              <div class="screen" data-screen="4">
+                <div class="screen__header">
+                  <span class="beacon"></span>
+                  <div>
+                    <p class="section-kicker">Execução</p>
+                    <h2>Sequência de clonagem</h2>
+                  </div>
+                </div>
+
+                <div class="launch-grid">
+                  <label class="toggle">
+                    <input type="checkbox" name="dryRun" checked />
+                    <span>Dry-run</span>
+                  </label>
+                  <label class="toggle">
+                    <input type="checkbox" name="allowExistingTarget" />
+                    <span>Permitir destino existente</span>
+                  </label>
+                  <button class="launch-button" id="simulateRun" type="button">Simular execução</button>
+                </div>
+
+                <ol class="mission-list" id="missionList">
+                  <li>Preflight SSH/Docker</li>
+                  <li>Descobrir app WordPress origem</li>
+                  <li>Criar app CapRover destino</li>
+                  <li>Copiar arquivos</li>
+                  <li>Dump e restore MySQL</li>
+                  <li>Atualizar wp-config.php</li>
+                  <li>Search-replace serializado</li>
+                  <li>Permissões e validação</li>
+                </ol>
+              </div>
+            </form>
+
+            <footer class="pager">
+              <button class="ghost-button" id="prevStep" type="button">Voltar</button>
+              <button class="command-button" id="nextStep" type="button">Avançar</button>
+            </footer>
+          </section>
+
+          <aside class="panel side">
+            <section class="radar" aria-label="Radar de execução">
+              <canvas id="radarCanvas" width="320" height="320"></canvas>
+              <div class="radar__readout">
+                <strong id="progressValue">00%</strong>
+                <span>Sincronização</span>
+              </div>
+            </section>
+
+            <section class="console" aria-label="Console">
+              <header>
+                <span>Audit Log</span>
+                <strong>MASKED</strong>
+              </header>
+              <pre id="consoleOutput">[standby] aguardando coordenadas da operação</pre>
+            </section>
+          </aside>
+        </div>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

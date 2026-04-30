@@ -1,0 +1,8 @@
+.git
+.wordpress-duplicator-state
+__pycache__
+*.pyc
+*.log
+wordpress-duplicator-report.json
+node_modules
+.env
