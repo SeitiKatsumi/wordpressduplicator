@@ -15,6 +15,7 @@ const allowStoreSecrets = process.env.ALLOW_STORE_SECRETS === "true";
 const dataDir = process.env.WORDPRESS_DUPLICATOR_DATA_DIR || "/data";
 const jobTimeoutSeconds = Number(process.env.JOB_TIMEOUT_SECONDS || 7200);
 const runningJobs = new Map();
+const caproverAppPattern = /^[a-zA-Z0-9][a-zA-Z0-9-]{1,62}$/;
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
@@ -251,6 +252,7 @@ function validateRunConfig(config) {
   const sourceSsh = config?.source?.ssh || {};
   const target = config?.target || {};
   const targetSsh = target.ssh || {};
+  const database = config?.database || {};
   const sourceKeyPath = sourceSsh.keyPath === "****" ? "" : sourceSsh.keyPath || "";
   const sourcePrivateKey = sourceSsh.privateKey || "";
   const targetKeyPath = targetSsh.keyPath === "****" ? "" : targetSsh.keyPath || "";
@@ -270,6 +272,12 @@ function validateRunConfig(config) {
   }
   if (!sourceKeyPath && !sourcePrivateKey) {
     return "Informe uma chave privada SSH origem completa ou um caminho de chave existente dentro do container.";
+  }
+  if (!caproverAppPattern.test(target.app || "")) {
+    return "Nome da nova app CapRover invalido. Use apenas letras, numeros e hifen, como wp-invest-caixa.";
+  }
+  if (!caproverAppPattern.test(database.targetMysqlApp || "")) {
+    return "Nome da nova app MySQL invalido. Use apenas letras, numeros e hifen, como wp-invest-caixa-db.";
   }
   return "";
 }

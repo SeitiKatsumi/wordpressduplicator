@@ -483,26 +483,46 @@ def ensure_mysql_service_config() -> None:
     volume = f"wpclone-{cfg.target_mysql_app}-mysql-data"
     env_args = [
         f"MYSQL_ROOT_PASSWORD={cfg.target_mysql_root_password}",
-        f"MYSQL_DATABASE={cfg.target_db_name}",
-        f"MYSQL_USER={cfg.target_db_user}",
-        f"MYSQL_PASSWORD={cfg.target_db_password}",
     ]
     update_parts = ["docker", "service", "update"]
     for item in env_args:
         update_parts.extend(["--env-add", item])
-    update_parts.append(service)
-    ssh(cfg.target_ssh, " ".join(shlex.quote(part) for part in update_parts))
-
     mount_check = (
         f"docker service inspect {shlex.quote(service)} --format '{{{{json .Spec.TaskTemplate.ContainerSpec.Mounts}}}}' "
         "| grep -q '\"/var/lib/mysql\"'"
     )
-    mount_cmd = (
-        f"if ! {mount_check}; then "
-        f"docker service update --mount-add {shlex.quote('type=volume,source=' + volume + ',target=/var/lib/mysql')} {shlex.quote(service)}; "
-        "fi"
+    has_mount = ssh_text(cfg.target_ssh, f"if {mount_check}; then echo yes; else echo no; fi")
+    if has_mount != "yes":
+        update_parts.extend(["--mount-add", f"type=volume,source={volume},target=/var/lib/mysql"])
+    update_parts.append(service)
+    ssh(cfg.target_ssh, " ".join(shlex.quote(part) for part in update_parts))
+
+
+def ensure_wordpress_volume_config() -> None:
+    cfg = STATE.config
+    assert cfg
+    service = STATE.target.target_service or captain_service(cfg.target_app)
+    volume = f"wpclone-{cfg.target_app}-wp-data"
+    mount_check = (
+        f"docker service inspect {shlex.quote(service)} --format '{{{{json .Spec.TaskTemplate.ContainerSpec.Mounts}}}}' "
+        f"| grep -q {shlex.quote(json.dumps(cfg.wp_path))}"
     )
-    ssh(cfg.target_ssh, mount_cmd)
+    has_mount = ssh_text(cfg.target_ssh, f"if {mount_check}; then echo yes; else echo no; fi")
+    if has_mount != "yes":
+        ssh(
+            cfg.target_ssh,
+            " ".join(
+                shlex.quote(part)
+                for part in [
+                    "docker",
+                    "service",
+                    "update",
+                    "--mount-add",
+                    f"type=volume,source={volume},target={cfg.wp_path}",
+                    service,
+                ]
+            ),
+        )
 
 
 def wait_mysql_ready(timeout: int = 240) -> None:
@@ -531,6 +551,7 @@ def deploy_target_image() -> None:
     assert cfg
     caprover_deploy_image(cfg.target_caprover, cfg.target_app, STATE.source.source_image)
     ensure_wordpress_service_config()
+    ensure_wordpress_volume_config()
     STATE.target.target_container = wait_container_exec(cfg.target_ssh, STATE.target.target_service, timeout=240)
 
 
@@ -713,10 +734,24 @@ def clone_database() -> None:
     exists_sql = f"SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME='{sql_escape(cfg.target_db_name)}';"
     existing = mysql_query_text(cfg.target_ssh, STATE.target.mysql_container, cfg.target_mysql_root_user, cfg.target_mysql_root_password, exists_sql)
     if existing and not cfg.allow_existing_target:
-        raise RuntimeError(f"Banco destino ja existe: {cfg.target_db_name}")
+        count_sql = (
+            "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
+            f"WHERE TABLE_SCHEMA='{sql_escape(cfg.target_db_name)}';"
+        )
+        table_count = mysql_query_text(
+            cfg.target_ssh,
+            STATE.target.mysql_container,
+            cfg.target_mysql_root_user,
+            cfg.target_mysql_root_password,
+            count_sql,
+        )
+        if int(table_count or "0") > 0:
+            raise RuntimeError(f"Banco destino ja existe e contem tabelas: {cfg.target_db_name}")
+        log(f"Banco destino ja existe vazio e sera usado: {cfg.target_db_name}")
 
     mysql_exec(cfg.target_ssh, STATE.target.mysql_container, cfg.target_mysql_root_user, cfg.target_mysql_root_password, f"CREATE DATABASE IF NOT EXISTS `{cfg.target_db_name}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;")
     mysql_exec(cfg.target_ssh, STATE.target.mysql_container, cfg.target_mysql_root_user, cfg.target_mysql_root_password, f"CREATE USER IF NOT EXISTS '{sql_escape(cfg.target_db_user)}'@'%' IDENTIFIED BY '{sql_escape(cfg.target_db_password)}';")
+    mysql_exec(cfg.target_ssh, STATE.target.mysql_container, cfg.target_mysql_root_user, cfg.target_mysql_root_password, f"ALTER USER '{sql_escape(cfg.target_db_user)}'@'%' IDENTIFIED BY '{sql_escape(cfg.target_db_password)}';")
     mysql_exec(cfg.target_ssh, STATE.target.mysql_container, cfg.target_mysql_root_user, cfg.target_mysql_root_password, f"GRANT ALL PRIVILEGES ON `{cfg.target_db_name}`.* TO '{sql_escape(cfg.target_db_user)}'@'%'; FLUSH PRIVILEGES;")
 
     src_dump_cmd = cfg.source_ssh.base_cmd() + [

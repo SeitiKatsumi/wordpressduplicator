@@ -30,11 +30,11 @@ const transferStages = [
   ["preflight", 8, "Validando SSH e Docker"],
   ["descobrir app wordpress origem", 16, "Lendo WordPress de origem"],
   ["criar app caprover destino", 25, "Criando app WordPress destino"],
-  ["deploying wordpress", 32, "Fazendo deploy da imagem WordPress"],
-  ["copiar arquivos", 45, "Transferindo arquivos WordPress"],
-  ["transferencia arquivos", 52, "Copiando volume WordPress"],
-  ["criar app mysql destino", 62, "Criando app MySQL destino"],
-  ["pulling this image: mysql", 70, "Baixando imagem MySQL"],
+  ["criar app mysql destino", 38, "Criando app MySQL destino"],
+  ["pulling this image: mysql", 50, "Baixando imagem MySQL"],
+  ["deploying wordpress", 58, "Fazendo deploy da imagem WordPress"],
+  ["copiar arquivos", 66, "Transferindo arquivos WordPress"],
+  ["transferencia arquivos", 70, "Copiando volume WordPress"],
   ["duplicar banco", 78, "Transferindo dump MySQL"],
   ["transferencia banco", 80, "Dump/restore MySQL em andamento"],
   ["dump e restore mysql", 82, "Restaurando banco no destino"],
@@ -84,6 +84,21 @@ function formData() {
   }
 
   return data;
+}
+
+function normalizeCapRoverName(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replaceAll("_", "-")
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 63);
+}
+
+function isValidCapRoverName(value) {
+  return /^[a-zA-Z0-9][a-zA-Z0-9-]{1,62}$/.test(String(value || ""));
 }
 
 function maskedConfig() {
@@ -501,6 +516,12 @@ function validateRealRun(config) {
   if (!sourceKeyPath && !sourcePrivateKey) {
     return "informe uma chave privada SSH origem completa ou um caminho de chave existente dentro do container.";
   }
+  if (!isValidCapRoverName(config.target.app)) {
+    return "a nova app CapRover precisa usar apenas letras, numeros e hifen. Exemplo: wp-invest-caixa.";
+  }
+  if (!isValidCapRoverName(config.database.targetMysqlApp)) {
+    return "a nova app MySQL precisa usar apenas letras, numeros e hifen. Exemplo: wp-invest-caixa-db.";
+  }
   return "";
 }
 
@@ -610,6 +631,25 @@ dryRunButton.addEventListener("click", () => {
 });
 simulateButton.addEventListener("click", simulateRun);
 executeButton.addEventListener("click", executeJob);
+form.elements.targetApp.addEventListener("blur", () => {
+  const normalized = normalizeCapRoverName(form.elements.targetApp.value);
+  if (normalized && normalized !== form.elements.targetApp.value) {
+    form.elements.targetApp.value = normalized;
+    appendLog(`nome da app normalizado para ${normalized}`);
+  }
+  if (!form.elements.targetMysqlApp.value && normalized) {
+    form.elements.targetMysqlApp.value = `${normalized}-db`;
+  }
+  refreshPreview();
+});
+form.elements.targetMysqlApp.addEventListener("blur", () => {
+  const normalized = normalizeCapRoverName(form.elements.targetMysqlApp.value);
+  if (normalized && normalized !== form.elements.targetMysqlApp.value) {
+    form.elements.targetMysqlApp.value = normalized;
+    appendLog(`nome da app MySQL normalizado para ${normalized}`);
+  }
+  refreshPreview();
+});
 
 document.querySelectorAll(".scan-row").forEach((button) => {
   button.addEventListener("click", () => simulateScan(button));
