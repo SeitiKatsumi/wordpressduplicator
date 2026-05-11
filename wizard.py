@@ -441,6 +441,34 @@ def caprover_deploy_image(cap: CapRoverTarget, app: str, image: str) -> None:
     ])
 
 
+def caprover_update_app_config(
+    cap: CapRoverTarget,
+    app: str,
+    *,
+    env_vars: dict[str, str],
+    volumes: list[tuple[str, str]],
+    not_expose_as_web_app: bool,
+) -> None:
+    payload = json.dumps(
+        {
+            "appName": app,
+            "instanceCount": 1,
+            "captainDefinitionRelativeFilePath": "./captain-definition",
+            "notExposeAsWebApp": not_expose_as_web_app,
+            "ports": [],
+            "volumes": [
+                {"volumeName": volume_name, "containerPath": container_path}
+                for volume_name, container_path in volumes
+            ],
+            "envVars": [
+                {"key": key, "value": value}
+                for key, value in env_vars.items()
+            ],
+        }
+    )
+    caprover_api(cap, "/user/apps/appDefinitions/update", payload)
+
+
 def create_target_app() -> None:
     cfg = STATE.config
     assert cfg
@@ -470,8 +498,8 @@ def create_target_mysql_app() -> None:
     else:
         log(f"App MySQL destino ja existe e sera reutilizada: {cfg.target_mysql_app}")
 
-    caprover_deploy_image(cfg.target_caprover, cfg.target_mysql_app, cfg.target_mysql_image)
     ensure_mysql_service_config()
+    caprover_deploy_image(cfg.target_caprover, cfg.target_mysql_app, cfg.target_mysql_image)
     STATE.target.mysql_container = wait_container_exec(cfg.target_ssh, target_service, timeout=240)
     wait_mysql_ready()
 
@@ -479,50 +507,27 @@ def create_target_mysql_app() -> None:
 def ensure_mysql_service_config() -> None:
     cfg = STATE.config
     assert cfg
-    service = captain_service(cfg.target_mysql_app)
     volume = f"wpclone-{cfg.target_mysql_app}-mysql-data"
-    env_args = [
-        f"MYSQL_ROOT_PASSWORD={cfg.target_mysql_root_password}",
-    ]
-    update_parts = ["docker", "service", "update"]
-    for item in env_args:
-        update_parts.extend(["--env-add", item])
-    mount_check = (
-        f"docker service inspect {shlex.quote(service)} --format '{{{{json .Spec.TaskTemplate.ContainerSpec.Mounts}}}}' "
-        "| grep -q '\"/var/lib/mysql\"'"
+    caprover_update_app_config(
+        cfg.target_caprover,
+        cfg.target_mysql_app,
+        env_vars={"MYSQL_ROOT_PASSWORD": cfg.target_mysql_root_password},
+        volumes=[(volume, "/var/lib/mysql")],
+        not_expose_as_web_app=True,
     )
-    has_mount = ssh_text(cfg.target_ssh, f"if {mount_check}; then echo yes; else echo no; fi")
-    if has_mount != "yes":
-        update_parts.extend(["--mount-add", f"type=volume,source={volume},target=/var/lib/mysql"])
-    update_parts.append(service)
-    ssh(cfg.target_ssh, " ".join(shlex.quote(part) for part in update_parts))
 
 
 def ensure_wordpress_volume_config() -> None:
     cfg = STATE.config
     assert cfg
-    service = STATE.target.target_service or captain_service(cfg.target_app)
     volume = f"wpclone-{cfg.target_app}-wp-data"
-    mount_check = (
-        f"docker service inspect {shlex.quote(service)} --format '{{{{json .Spec.TaskTemplate.ContainerSpec.Mounts}}}}' "
-        f"| grep -q {shlex.quote(json.dumps(cfg.wp_path))}"
+    caprover_update_app_config(
+        cfg.target_caprover,
+        cfg.target_app,
+        env_vars=wordpress_env_vars(),
+        volumes=[(volume, cfg.wp_path)],
+        not_expose_as_web_app=False,
     )
-    has_mount = ssh_text(cfg.target_ssh, f"if {mount_check}; then echo yes; else echo no; fi")
-    if has_mount != "yes":
-        ssh(
-            cfg.target_ssh,
-            " ".join(
-                shlex.quote(part)
-                for part in [
-                    "docker",
-                    "service",
-                    "update",
-                    "--mount-add",
-                    f"type=volume,source={volume},target={cfg.wp_path}",
-                    service,
-                ]
-            ),
-        )
 
 
 def wait_mysql_ready(timeout: int = 240) -> None:
@@ -538,7 +543,7 @@ def wait_mysql_ready(timeout: int = 240) -> None:
             STATE.target.mysql_container = container
             ok = ssh_text(
                 cfg.target_ssh,
-                f"docker exec {container} mysqladmin ping -u{shlex.quote(cfg.target_mysql_root_user)} -p{shlex.quote(cfg.target_mysql_root_password)} --silent >/dev/null 2>&1 && echo yes || true",
+                f"docker exec -e {shlex.quote('MYSQL_PWD=' + cfg.target_mysql_root_password)} {container} mysqladmin ping -u{shlex.quote(cfg.target_mysql_root_user)} --silent >/dev/null 2>&1 && echo yes || true",
             )
             if ok == "yes":
                 return
@@ -549,28 +554,21 @@ def wait_mysql_ready(timeout: int = 240) -> None:
 def deploy_target_image() -> None:
     cfg = STATE.config
     assert cfg
-    caprover_deploy_image(cfg.target_caprover, cfg.target_app, STATE.source.source_image)
-    ensure_wordpress_service_config()
     ensure_wordpress_volume_config()
+    caprover_deploy_image(cfg.target_caprover, cfg.target_app, STATE.source.source_image)
     STATE.target.target_container = wait_container_exec(cfg.target_ssh, STATE.target.target_service, timeout=240)
 
 
-def ensure_wordpress_service_config() -> None:
+def wordpress_env_vars() -> dict[str, str]:
     cfg = STATE.config
     assert cfg
     generate_db_names()
-    service = STATE.target.target_service or captain_service(cfg.target_app)
-    env_args = [
-        f"WORDPRESS_DB_HOST={STATE.target.target_db_host}",
-        f"WORDPRESS_DB_NAME={cfg.target_db_name}",
-        f"WORDPRESS_DB_USER={cfg.target_db_user}",
-        f"WORDPRESS_DB_PASSWORD={cfg.target_db_password}",
-    ]
-    update_parts = ["docker", "service", "update"]
-    for item in env_args:
-        update_parts.extend(["--env-add", item])
-    update_parts.append(service)
-    ssh(cfg.target_ssh, " ".join(shlex.quote(part) for part in update_parts))
+    return {
+        "WORDPRESS_DB_HOST": STATE.target.target_db_host,
+        "WORDPRESS_DB_NAME": cfg.target_db_name,
+        "WORDPRESS_DB_USER": cfg.target_db_user,
+        "WORDPRESS_DB_PASSWORD": cfg.target_db_password,
+    }
 
 
 def wait_container(target: SshTarget, service: str, timeout: int = 180) -> str:
@@ -705,7 +703,7 @@ def generate_db_names() -> None:
 
 def mysql_exec(target: SshTarget, container: str, user: str, password: str, sql: str) -> None:
     remember_secret(password)
-    cmd = f"docker exec -i {container} mysql -u{shlex.quote(user)} -p{shlex.quote(password)} -e {shlex.quote(sql)}"
+    cmd = f"docker exec -e {shlex.quote('MYSQL_PWD=' + password)} -i {container} mysql -u{shlex.quote(user)} -e {shlex.quote(sql)}"
     cp = ssh(target, cmd, capture=True, check=False)
     if cp.returncode != 0:
         stdout = cp.stdout.decode("utf-8", errors="replace").strip() if cp.stdout else ""
@@ -716,7 +714,7 @@ def mysql_exec(target: SshTarget, container: str, user: str, password: str, sql:
 
 def mysql_query_text(target: SshTarget, container: str, user: str, password: str, sql: str) -> str:
     remember_secret(password)
-    cmd = f"docker exec -i {container} mysql -u{shlex.quote(user)} -p{shlex.quote(password)} -NBe {shlex.quote(sql)}"
+    cmd = f"docker exec -e {shlex.quote('MYSQL_PWD=' + password)} -i {container} mysql -u{shlex.quote(user)} -NBe {shlex.quote(sql)}"
     cp = ssh(target, cmd, capture=True, check=False)
     if cp.returncode != 0:
         stdout = cp.stdout.decode("utf-8", errors="replace").strip() if cp.stdout else ""
@@ -754,19 +752,41 @@ def clone_database() -> None:
     mysql_exec(cfg.target_ssh, STATE.target.mysql_container, cfg.target_mysql_root_user, cfg.target_mysql_root_password, f"ALTER USER '{sql_escape(cfg.target_db_user)}'@'%' IDENTIFIED BY '{sql_escape(cfg.target_db_password)}';")
     mysql_exec(cfg.target_ssh, STATE.target.mysql_container, cfg.target_mysql_root_user, cfg.target_mysql_root_password, f"GRANT ALL PRIVILEGES ON `{cfg.target_db_name}`.* TO '{sql_escape(cfg.target_db_user)}'@'%'; FLUSH PRIVILEGES;")
 
-    src_dump_cmd = cfg.source_ssh.base_cmd() + [
-        "docker exec -i "
-        + STATE.source.mysql_container
-        + f" mysqldump -u{shlex.quote(cfg.source_mysql_root_user)} -p{shlex.quote(cfg.source_mysql_root_password)} --single-transaction --routines --triggers --events {shlex.quote(STATE.source.db_name)}"
-    ]
-    dst_restore_cmd = cfg.target_ssh.base_cmd() + [
-        "docker exec -i "
-        + STATE.target.mysql_container
-        + f" mysql -u{shlex.quote(cfg.target_mysql_root_user)} -p{shlex.quote(cfg.target_mysql_root_password)} {shlex.quote(cfg.target_db_name)}"
-    ]
     log("+ duplicar banco via mysqldump/mysql por SSH")
     if cfg.dry_run:
         return
+
+    dump_inner = (
+        f"docker exec -e {shlex.quote('MYSQL_PWD=' + cfg.source_mysql_root_password)} -i {STATE.source.mysql_container} "
+        f"mysqldump -u{shlex.quote(cfg.source_mysql_root_user)} "
+        f"--single-transaction --quick --routines --triggers --events --no-tablespaces "
+        f"{shlex.quote(STATE.source.db_name)}"
+    )
+    restore_inner = (
+        f"docker exec -e {shlex.quote('MYSQL_PWD=' + cfg.target_mysql_root_password)} -i {STATE.target.mysql_container} "
+        f"mysql -u{shlex.quote(cfg.target_mysql_root_user)} {shlex.quote(cfg.target_db_name)}"
+    )
+
+    if same_ssh_target(cfg.source_ssh, cfg.target_ssh):
+        remote_script = (
+            "set -euo pipefail; "
+            "echo 'transferencia banco: dump MySQL iniciado'; "
+            f"{dump_inner} | {restore_inner}; "
+            "echo 'transferencia banco: restore MySQL concluido'"
+        )
+        cp = ssh(cfg.source_ssh, remote_script, capture=True, check=False)
+        stdout = cp.stdout.decode("utf-8", errors="replace").strip() if cp.stdout else ""
+        stderr = cp.stderr.decode("utf-8", errors="replace").strip() if cp.stderr else ""
+        for line in stdout.splitlines():
+            if line.strip():
+                log(line.strip())
+        if cp.returncode != 0:
+            detail = "\n".join(part for part in [stdout, stderr] if part)
+            raise RuntimeError(f"Falha ao duplicar banco rc={cp.returncode}: {redact(detail) or 'sem detalhe retornado'}")
+        return
+
+    src_dump_cmd = cfg.source_ssh.base_cmd() + [dump_inner]
+    dst_restore_cmd = cfg.target_ssh.base_cmd() + [restore_inner]
     log("transferencia banco: dump MySQL iniciado")
     p1 = subprocess.Popen(src_dump_cmd, stdout=subprocess.PIPE)
     p2 = subprocess.Popen(dst_restore_cmd, stdin=p1.stdout)
@@ -856,7 +876,7 @@ def validate_target() -> None:
     validation_sql = f'SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA="{sql_escape(cfg.target_db_name)}";'
     count = ssh_text(
         cfg.target_ssh,
-        f"docker exec -i {STATE.target.mysql_container} mysql -u{shlex.quote(cfg.target_mysql_root_user)} -p{shlex.quote(cfg.target_mysql_root_password)} -NBe {shlex.quote(validation_sql)}",
+        f"docker exec -e {shlex.quote('MYSQL_PWD=' + cfg.target_mysql_root_password)} -i {STATE.target.mysql_container} mysql -u{shlex.quote(cfg.target_mysql_root_user)} -NBe {shlex.quote(validation_sql)}",
     )
     if int(count or "0") <= 0:
         raise RuntimeError("Banco destino nao possui tabelas.")
