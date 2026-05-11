@@ -28,6 +28,7 @@ Responsabilidades:
 - descobrir banco MySQL;
 - criar app CapRover destino;
 - copiar arquivos;
+- criar app MySQL destino separada;
 - duplicar banco;
 - atualizar `wp-config.php`;
 - executar `wp search-replace`;
@@ -77,6 +78,7 @@ source_discovered
 target_app_created
 target_image_deployed
 files_copied
+target_mysql_app_created
 database_cloned
 wp_config_updated
 urls_replaced

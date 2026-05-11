@@ -235,24 +235,28 @@
                     <input name="sourceMysqlPassword" type="password" required />
                   </label>
                   <label class="field">
-                    <span>App MySQL destino</span>
-                    <input name="targetMysqlApp" placeholder="vazio = detectar" />
+                    <span>Nova app MySQL destino</span>
+                    <input name="targetMysqlApp" placeholder="wordpress-clone-db" required />
+                  </label>
+                  <label class="field">
+                    <span>Imagem MySQL destino</span>
+                    <input name="targetMysqlImage" value="mysql:8.0" required />
                   </label>
                   <label class="field">
                     <span>MySQL root destino</span>
                     <input name="targetMysqlUser" value="root" required />
                   </label>
                   <label class="field">
-                    <span>Senha MySQL destino</span>
-                    <input name="targetMysqlPassword" type="password" required />
+                    <span>Senha root destino</span>
+                    <input name="targetMysqlPassword" type="password" placeholder="vazio = gerar automaticamente" />
                   </label>
                   <label class="field">
                     <span>Novo banco</span>
-                    <input name="targetDbName" placeholder="gerado automaticamente" />
+                    <input name="targetDbName" placeholder="wordpress" />
                   </label>
                   <label class="field">
                     <span>Novo usuário</span>
-                    <input name="targetDbUser" placeholder="gerado automaticamente" />
+                    <input name="targetDbUser" placeholder="wordpressuser" />
                   </label>
                   <label class="field">
                     <span>Nova senha</span>
@@ -288,6 +292,7 @@
                   <li>Descobrir app WordPress origem</li>
                   <li>Criar app CapRover destino</li>
                   <li>Copiar arquivos</li>
+                  <li>Criar app MySQL destino</li>
                   <li>Dump e restore MySQL</li>
                   <li>Atualizar wp-config.php</li>
                   <li>Search-replace serializado</li>

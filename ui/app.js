@@ -46,6 +46,10 @@ function formData() {
   data.sameCaprover = form.elements.sameCaprover.checked;
   data.dryRun = form.elements.dryRun.checked;
   data.allowExistingTarget = form.elements.allowExistingTarget.checked;
+  if (!data.targetMysqlApp && data.targetApp) data.targetMysqlApp = `${data.targetApp}-db`;
+  if (!data.targetMysqlImage) data.targetMysqlImage = "mysql:8.0";
+  if (!data.targetDbName) data.targetDbName = "wordpress";
+  if (!data.targetDbUser) data.targetDbUser = "wordpressuser";
 
   if (data.sameSsh) {
     data.targetSshHost = data.sourceSshHost;
@@ -108,6 +112,7 @@ function maskedConfig() {
       sourceRootUser: data.sourceMysqlUser,
       sourceRootPassword: data.sourceMysqlPassword,
       targetMysqlApp: data.targetMysqlApp,
+      targetMysqlImage: data.targetMysqlImage,
       targetRootUser: data.targetMysqlUser,
       targetRootPassword: data.targetMysqlPassword,
       targetDbName: data.targetDbName,
@@ -184,6 +189,7 @@ function fillFormFromConfig(config) {
   set("sourceMysqlUser", database.sourceRootUser || "root");
   set("sourceMysqlPassword", "");
   set("targetMysqlApp", database.targetMysqlApp);
+  set("targetMysqlImage", database.targetMysqlImage || "mysql:8.0");
   set("targetMysqlUser", database.targetRootUser || "root");
   set("targetMysqlPassword", "");
   set("targetDbName", database.targetDbName);
@@ -240,6 +246,7 @@ function rawConfig() {
       sourceRootUser: data.sourceMysqlUser,
       sourceRootPassword: data.sourceMysqlPassword,
       targetMysqlApp: data.targetMysqlApp,
+      targetMysqlImage: data.targetMysqlImage,
       targetRootUser: data.targetMysqlUser,
       targetRootPassword: data.targetMysqlPassword,
       targetDbName: data.targetDbName,
@@ -261,12 +268,24 @@ function appendLog(line) {
 
 function refreshPreview() {
   const data = formData();
+  if (form.elements.targetMysqlApp && !form.elements.targetMysqlApp.value && data.targetApp) {
+    form.elements.targetMysqlApp.value = data.targetMysqlApp;
+  }
+  if (form.elements.targetMysqlImage && !form.elements.targetMysqlImage.value) {
+    form.elements.targetMysqlImage.value = data.targetMysqlImage;
+  }
+  if (form.elements.targetDbName && !form.elements.targetDbName.value) {
+    form.elements.targetDbName.value = data.targetDbName;
+  }
+  if (form.elements.targetDbUser && !form.elements.targetDbUser.value) {
+    form.elements.targetDbUser.value = data.targetDbUser;
+  }
   document.querySelector("#imagePreview").textContent = data.sourceApp
     ? `clone:${data.sourceApp}`
     : "wordpress:detect";
   document.querySelector("#dbHostPreview").textContent = data.targetMysqlApp
     ? `srv-captain--${data.targetMysqlApp}`
-    : "srv-captain--mysql";
+    : "srv-captain--nova-app-db";
   document.querySelector("#volumePreview").textContent = data.wpPath || "/var/www/html";
   telemetryMode.textContent = data.dryRun ? "DRY" : "LIVE";
   telemetryRisk.textContent = data.allowExistingTarget ? "MÉDIO" : "BAIXO";

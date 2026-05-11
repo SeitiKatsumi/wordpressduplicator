@@ -124,9 +124,10 @@ Se ainda assim decidir usar Docker socket, faca isso apenas em ambiente controla
    - nome da nova app;
    - nova URL.
 5. Configure banco:
-   - app MySQL destino;
-   - credenciais root/admin;
-   - nome do novo banco ou geracao automatica.
+   - senha root/admin do MySQL origem;
+   - nova app MySQL destino, por exemplo `cliente-wordpress-db`;
+   - imagem MySQL destino, por exemplo `mysql:8.0`;
+   - nome do novo banco e usuario, ou deixe os padroes.
 6. Execute primeiro em dry-run.
 7. Execute em modo real.
 8. Adicione dominio e HTTPS manualmente no CapRover.
@@ -177,6 +178,7 @@ Credenciais sensiveis devem ser criptografadas com `APP_SECRET_KEY` ou solicitad
 - Bloquear destino existente por padrao.
 - Nunca escrever no banco original.
 - Nunca alterar arquivos da app original.
+- Para clientes separados, use uma nova app MySQL destino para cada clone.
 - Usar `wp search-replace` em vez de SQL bruto para URLs.
 - Ignorar coluna `guid` no search-replace.
 - Registrar cada checkpoint.

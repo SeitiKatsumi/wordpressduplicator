@@ -69,21 +69,23 @@ def build_config(raw: dict) -> wizard.CloneConfig:
         password=value(target, "caprover", "password"),
     )
 
+    target_app = value(target, "app")
     config = wizard.CloneConfig(
         source_ssh=source_ssh,
         target_ssh=target_ssh,
         source_caprover=source_caprover,
         target_caprover=target_caprover,
         source_app=value(source, "app"),
-        target_app=value(target, "app"),
+        target_app=target_app,
         old_url=value(source, "url").rstrip("/"),
         new_url=value(target, "url").rstrip("/"),
         wp_path=value(target, "wpPath", default="/var/www/html"),
         source_mysql_root_user=value(database, "sourceRootUser", default="root"),
         source_mysql_root_password=value(database, "sourceRootPassword"),
-        target_mysql_app=value(database, "targetMysqlApp"),
+        target_mysql_app=value(database, "targetMysqlApp", default=f"{target_app}-db"),
         target_mysql_root_user=value(database, "targetRootUser", default="root"),
         target_mysql_root_password=value(database, "targetRootPassword"),
+        target_mysql_image=value(database, "targetMysqlImage", default="mysql:8.0"),
         target_db_name=value(database, "targetDbName"),
         target_db_user=value(database, "targetDbUser"),
         target_db_password=value(database, "targetDbPassword"),

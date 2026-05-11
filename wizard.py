@@ -76,6 +76,7 @@ class CloneConfig:
     target_mysql_app: str = ""
     target_mysql_root_user: str = "root"
     target_mysql_root_password: str = ""
+    target_mysql_image: str = "mysql:8.0"
     target_db_name: str = ""
     target_db_user: str = ""
     target_db_password: str = ""
@@ -187,7 +188,11 @@ def captain_service(app: str) -> str:
 
 
 def validate_or_die(config: CloneConfig) -> None:
-    for label, value in [("source_app", config.source_app), ("target_app", config.target_app)]:
+    for label, value in [
+        ("source_app", config.source_app),
+        ("target_app", config.target_app),
+        ("target_mysql_app", config.target_mysql_app),
+    ]:
         if not APP_RE.match(value):
             raise RuntimeError(f"{label} invalido: {value}")
     for label, value in [("old_url", config.old_url), ("new_url", config.new_url)]:
@@ -244,6 +249,7 @@ def load_state() -> Optional[WizardState]:
             target_mysql_app=cfg.get("target_mysql_app", ""),
             target_mysql_root_user=cfg.get("target_mysql_root_user", "root"),
             target_mysql_root_password=cfg.get("target_mysql_root_password", ""),
+            target_mysql_image=cfg.get("target_mysql_image", "mysql:8.0"),
             target_db_name=cfg.get("target_db_name", ""),
             target_db_user=cfg.get("target_db_user", ""),
             target_db_password=cfg.get("target_db_password", ""),
@@ -294,11 +300,11 @@ def collect_config() -> CloneConfig:
     print("\nEtapa 3: banco MySQL.")
     source_root_user = prompt("Usuario root/admin MySQL da origem", "root")
     source_root_password = prompt("Senha root/admin MySQL da origem", secret=True)
-    target_mysql_app = prompt("App MySQL no CapRover destino (vazio = detectar pela origem)", "", required=False)
+    target_mysql_app = prompt("Nome da nova app MySQL destino", f"{target_app}-db")
     target_root_user = prompt("Usuario root/admin MySQL destino", source_root_user)
-    target_root_password = prompt("Senha root/admin MySQL destino", source_root_password, secret=True)
-    target_db_name = prompt("Nome do novo banco (vazio = gerar)", "", required=False)
-    target_db_user = prompt("Usuario do novo banco (vazio = gerar)", "", required=False)
+    target_root_password = prompt("Senha root/admin MySQL destino (vazio = gerar)", "", secret=True, required=False)
+    target_db_name = prompt("Nome do novo banco", "wordpress", required=False)
+    target_db_user = prompt("Usuario do novo banco", STATE.source.db_user or "wordpressuser", required=False)
     target_db_password = prompt("Senha do novo banco (vazio = gerar)", "", secret=True, required=False)
 
     allow_existing = prompt_bool("Permitir reutilizar app/banco destino se ja existirem?", False)
@@ -319,6 +325,7 @@ def collect_config() -> CloneConfig:
         target_mysql_app=target_mysql_app,
         target_mysql_root_user=target_root_user,
         target_mysql_root_password=target_root_password,
+        target_mysql_image="mysql:8.0",
         target_db_name=target_db_name,
         target_db_user=target_db_user,
         target_db_password=target_db_password,
@@ -449,6 +456,76 @@ def create_target_app() -> None:
     STATE.target.target_service = target_service
 
 
+def create_target_mysql_app() -> None:
+    cfg = STATE.config
+    assert cfg
+    generate_db_names()
+    target_service = captain_service(cfg.target_mysql_app)
+    existing = ssh_text(cfg.target_ssh, f"docker service ls --format '{{{{.Name}}}}' | grep -x {shlex.quote(target_service)} || true")
+    if existing and not cfg.allow_existing_target:
+        raise RuntimeError("A app MySQL destino ja existe. Reexecute permitindo reutilizacao se for intencional.")
+    if not existing:
+        payload = json.dumps({"appName": cfg.target_mysql_app, "hasPersistentData": True})
+        caprover_api(cfg.target_caprover, "/user/apps/appDefinitions/register", payload)
+    else:
+        log(f"App MySQL destino ja existe e sera reutilizada: {cfg.target_mysql_app}")
+
+    caprover_deploy_image(cfg.target_caprover, cfg.target_mysql_app, cfg.target_mysql_image)
+    ensure_mysql_service_config()
+    STATE.target.mysql_container = wait_container(cfg.target_ssh, target_service, timeout=240)
+    wait_mysql_ready()
+
+
+def ensure_mysql_service_config() -> None:
+    cfg = STATE.config
+    assert cfg
+    service = captain_service(cfg.target_mysql_app)
+    volume = f"wpclone-{cfg.target_mysql_app}-mysql-data"
+    env_args = [
+        f"MYSQL_ROOT_PASSWORD={cfg.target_mysql_root_password}",
+        f"MYSQL_DATABASE={cfg.target_db_name}",
+        f"MYSQL_USER={cfg.target_db_user}",
+        f"MYSQL_PASSWORD={cfg.target_db_password}",
+    ]
+    update_parts = ["docker", "service", "update"]
+    for item in env_args:
+        update_parts.extend(["--env-add", item])
+    update_parts.append(service)
+    ssh(cfg.target_ssh, " ".join(shlex.quote(part) for part in update_parts))
+
+    mount_check = (
+        f"docker service inspect {shlex.quote(service)} --format '{{{{json .Spec.TaskTemplate.ContainerSpec.Mounts}}}}' "
+        "| grep -q '\"/var/lib/mysql\"'"
+    )
+    mount_cmd = (
+        f"if ! {mount_check}; then "
+        f"docker service update --mount-add {shlex.quote('type=volume,source=' + volume + ',target=/var/lib/mysql')} {shlex.quote(service)}; "
+        "fi"
+    )
+    ssh(cfg.target_ssh, mount_cmd)
+
+
+def wait_mysql_ready(timeout: int = 240) -> None:
+    cfg = STATE.config
+    assert cfg
+    service = captain_service(cfg.target_mysql_app)
+    for _ in range(max(1, timeout // 4)):
+        container = ssh_text(
+            cfg.target_ssh,
+            f"docker ps --filter {shlex.quote('label=com.docker.swarm.service.name=' + service)} --format '{{{{.ID}}}}' | head -n 1",
+        )
+        if container:
+            STATE.target.mysql_container = container
+            ok = ssh_text(
+                cfg.target_ssh,
+                f"docker exec {container} mysqladmin ping -u{shlex.quote(cfg.target_mysql_root_user)} -p{shlex.quote(cfg.target_mysql_root_password)} --silent >/dev/null 2>&1 && echo yes || true",
+            )
+            if ok == "yes":
+                return
+        time.sleep(4)
+    raise RuntimeError(f"MySQL destino nao ficou pronto: {cfg.target_mysql_app}")
+
+
 def deploy_target_image() -> None:
     cfg = STATE.config
     assert cfg
@@ -541,25 +618,30 @@ def same_ssh_target(left: SshTarget, right: SshTarget) -> bool:
 def generate_db_names() -> None:
     cfg = STATE.config
     assert cfg
-    suffix = re.sub(r"[^a-zA-Z0-9_]", "_", cfg.target_app)
+    if not cfg.target_mysql_app:
+        cfg.target_mysql_app = f"{cfg.target_app}-db"
+    if not cfg.target_mysql_root_password:
+        cfg.target_mysql_root_password = secrets.token_urlsafe(24)
     if not cfg.target_db_name:
-        cfg.target_db_name = f"{STATE.source.db_name}_{suffix}"[:60]
+        cfg.target_db_name = STATE.source.db_name or "wordpress"
     if not cfg.target_db_user:
-        cfg.target_db_user = f"{STATE.source.db_user}_{suffix}"[:30]
+        cfg.target_db_user = (STATE.source.db_user or "wordpressuser")[:30]
     if not cfg.target_db_password:
         cfg.target_db_password = secrets.token_urlsafe(24)
+    remember_secret(cfg.target_mysql_root_password)
     remember_secret(cfg.target_db_password)
-    target_mysql_app = cfg.target_mysql_app or STATE.source.mysql_app
-    STATE.target.mysql_container = mysql_container(cfg.target_ssh, target_mysql_app)
-    if not STATE.target.mysql_container:
-        raise RuntimeError(f"Container MySQL destino nao encontrado: {target_mysql_app}")
-    STATE.target.target_db_host = f"srv-captain--{target_mysql_app}"
+    STATE.target.target_db_host = f"srv-captain--{cfg.target_mysql_app}:3306"
 
 
 def mysql_exec(target: SshTarget, container: str, user: str, password: str, sql: str) -> None:
     remember_secret(password)
     cmd = f"docker exec -i {container} mysql -u{shlex.quote(user)} -p{shlex.quote(password)} -e {shlex.quote(sql)}"
-    ssh(target, cmd)
+    cp = ssh(target, cmd, capture=True, check=False)
+    if cp.returncode != 0:
+        stdout = cp.stdout.decode("utf-8", errors="replace").strip() if cp.stdout else ""
+        stderr = cp.stderr.decode("utf-8", errors="replace").strip() if cp.stderr else ""
+        detail = "\n".join(part for part in [stdout, stderr] if part)
+        raise RuntimeError(f"Falha MySQL rc={cp.returncode}: {redact(detail) or 'sem detalhe retornado'}")
 
 
 def clone_database() -> None:
@@ -569,7 +651,7 @@ def clone_database() -> None:
     exists_sql = f"SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME='{sql_escape(cfg.target_db_name)}';"
     existing = ssh_text(
         cfg.target_ssh,
-        f"docker exec -i {STATE.target.mysql_container} mysql -u{shlex.quote(cfg.target_mysql_root_user)} -p{shlex.quote(cfg.target_mysql_root_password)} -NBe {shlex.quote(exists_sql)} || true",
+        f"docker exec -i {STATE.target.mysql_container} mysql -u{shlex.quote(cfg.target_mysql_root_user)} -p{shlex.quote(cfg.target_mysql_root_password)} -NBe {shlex.quote(exists_sql)}",
     )
     if existing and not cfg.allow_existing_target:
         raise RuntimeError(f"Banco destino ja existe: {cfg.target_db_name}")
@@ -709,6 +791,8 @@ def write_report() -> None:
             "caprover": cfg.target_caprover.url,
             "app": cfg.target_app,
             "service": STATE.target.target_service,
+            "mysql_app": cfg.target_mysql_app,
+            "mysql_service": captain_service(cfg.target_mysql_app),
             "database": cfg.target_db_name,
             "database_user": cfg.target_db_user,
             "database_password": "****",
@@ -754,6 +838,13 @@ def run_flow() -> None:
     if not done("files_copied"):
         copy_files()
         checkpoint("files_copied")
+
+    if not done("target_mysql_app_created"):
+        create_target_mysql_app()
+        checkpoint("target_mysql_app_created")
+    elif not STATE.target.mysql_container:
+        generate_db_names()
+        STATE.target.mysql_container = wait_container(cfg.target_ssh, captain_service(cfg.target_mysql_app))
 
     if not done("database_cloned"):
         clone_database()
