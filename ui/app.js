@@ -15,6 +15,9 @@ const missionList = document.querySelector("#missionList");
 const telemetryMode = document.querySelector("#telemetryMode");
 const telemetryRisk = document.querySelector("#telemetryRisk");
 const telemetryState = document.querySelector("#telemetryState");
+const transferPhase = document.querySelector("#transferPhase");
+const transferBar = document.querySelector("#transferBar");
+const transferDetail = document.querySelector("#transferDetail");
 const canvas = document.querySelector("#radarCanvas");
 const ctx = canvas.getContext("2d");
 
@@ -22,6 +25,25 @@ let currentStep = 0;
 let progress = 0;
 let sweep = 0;
 let activeJobPoll = null;
+
+const transferStages = [
+  ["preflight", 8, "Validando SSH e Docker"],
+  ["descobrir app wordpress origem", 16, "Lendo WordPress de origem"],
+  ["criar app caprover destino", 25, "Criando app WordPress destino"],
+  ["deploying wordpress", 32, "Fazendo deploy da imagem WordPress"],
+  ["copiar arquivos", 45, "Transferindo arquivos WordPress"],
+  ["transferencia arquivos", 52, "Copiando volume WordPress"],
+  ["criar app mysql destino", 62, "Criando app MySQL destino"],
+  ["pulling this image: mysql", 70, "Baixando imagem MySQL"],
+  ["duplicar banco", 78, "Transferindo dump MySQL"],
+  ["transferencia banco", 80, "Dump/restore MySQL em andamento"],
+  ["dump e restore mysql", 82, "Restaurando banco no destino"],
+  ["atualizar wp-config", 88, "Apontando WordPress para o banco novo"],
+  ["search-replace", 94, "Regravando URLs serializadas"],
+  ["permiss", 98, "Ajustando permissoes"],
+  ["validacao ok", 100, "Clone validado"],
+  ["execucao concluida", 100, "Clone concluido"],
+];
 
 const scanMessages = {
   ssh: "SSH conectado",
@@ -264,6 +286,37 @@ function appendLog(line) {
   const now = new Date().toISOString().slice(11, 19);
   consoleOutput.textContent += `\n[${now}] ${line}`;
   consoleOutput.scrollTop = consoleOutput.scrollHeight;
+  updateTransferFromText(line);
+}
+
+function setTransfer(percent, phase, detail = "") {
+  const safePercent = Math.max(0, Math.min(100, percent));
+  transferBar.style.width = `${safePercent}%`;
+  transferPhase.textContent = phase;
+  transferDetail.textContent = detail || `${safePercent}% concluido`;
+  progress = Math.max(progress, safePercent);
+  progressValue.textContent = `${String(progress).padStart(2, "0")}%`;
+}
+
+function updateTransferFromText(text) {
+  const raw = String(text || "");
+  const normalized = raw.toLowerCase();
+  if (!normalized) return;
+  if (normalized.includes("failed") || normalized.includes("falhou") || normalized.includes("execucao falhou")) {
+    transferPhase.textContent = "Falhou";
+    transferDetail.textContent = raw.slice(0, 180);
+    return;
+  }
+  for (const [needle, percent, detail] of transferStages) {
+    if (normalized.includes(needle)) {
+      setTransfer(percent, percent >= 100 ? "Completo" : "Em curso", detail);
+      return;
+    }
+  }
+  const sizeMatch = raw.match(/([0-9]+(?:[.,][0-9]+)?\s*(?:b|kb|mb|gb|tb))/i);
+  if (sizeMatch && /arquivo|dump|transfer|volume|tar/i.test(raw)) {
+    transferDetail.textContent = `Volume observado: ${sizeMatch[1]}`;
+  }
 }
 
 function refreshPreview() {
@@ -369,11 +422,13 @@ async function pollJob(id) {
       const job = payload.job;
       const last = payload.logs.slice(-6).map((entry) => `[${entry.level}] ${entry.message}`);
       consoleOutput.textContent = last.join("\n") || consoleOutput.textContent;
+      payload.logs.forEach((entry) => updateTransferFromText(entry.message));
       telemetryState.textContent = job.status.toUpperCase();
       if (["succeeded", "failed", "cancelled"].includes(job.status)) {
         window.clearInterval(activeJobPoll);
         await loadJobs();
         appendLog(`job ${job.status}: ${id}`);
+        if (job.status === "succeeded") setTransfer(100, "Completo", "Clone concluido com sucesso");
       }
     } catch (error) {
       appendLog(`falha ao acompanhar job: ${error.message}`);
@@ -416,6 +471,7 @@ async function executeJob() {
       method: "POST",
       body: JSON.stringify({ config, run: true }),
     });
+    setTransfer(4, "Iniciando", "Job enviado para o runner");
     appendLog(`execução real iniciada: ${payload.id}`);
     await loadJobs();
     await pollJob(payload.id);
@@ -473,6 +529,7 @@ function simulateRun() {
   progress = 44;
   progressValue.textContent = "44%";
   telemetryState.textContent = "EXEC";
+  setTransfer(8, "Simulando", "Sequencia de clonagem iniciada");
   appendLog("sequência de duplicação simulada iniciada");
   saveJob();
 

@@ -507,6 +507,55 @@ input[type="checkbox"] {
   text-transform: uppercase;
 }
 
+.transfer {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid rgba(147, 161, 152, 0.18);
+  background:
+    linear-gradient(90deg, rgba(166, 255, 77, 0.08), rgba(255, 181, 71, 0.05)),
+    rgba(3, 5, 4, 0.74);
+}
+
+.transfer header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--steel);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.transfer header strong {
+  color: var(--amber);
+}
+
+.transfer__track {
+  height: 12px;
+  border: 1px solid rgba(166, 255, 77, 0.32);
+  background: rgba(3, 5, 4, 0.82);
+  overflow: hidden;
+}
+
+.transfer__track span {
+  display: block;
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, var(--radar), var(--amber));
+  box-shadow: 0 0 24px rgba(166, 255, 77, 0.42);
+  transition: width 420ms ease;
+}
+
+.transfer p {
+  min-height: 34px;
+  margin: 0;
+  color: var(--steel);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .console {
   border: 1px solid rgba(147, 161, 152, 0.18);
   background: rgba(3, 5, 4, 0.74);

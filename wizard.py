@@ -566,13 +566,16 @@ def copy_files() -> None:
             f"rm -f {shlex.quote(tmp_tar)}; "
             f"rm -rf {shlex.quote(tmp_dir)}; "
             f"docker exec {STATE.source.source_container} sh -lc {shlex.quote(f'pwd; ls -la {cfg.wp_path}; test -f {cfg.wp_path}/wp-config.php')} || exit 41; "
+            f"echo 'transferencia arquivos: preparando volume WordPress'; "
             "tar_rc=0; "
             f"docker exec {STATE.source.source_container} sh -lc {shlex.quote(f'tar --warning=no-file-changed --ignore-failed-read -C {cfg.wp_path} -czf - .')} > {shlex.quote(tmp_tar)} || tar_rc=$?; "
+            f"if test -s {shlex.quote(tmp_tar)}; then bytes=$(stat -c%s {shlex.quote(tmp_tar)} 2>/dev/null || wc -c < {shlex.quote(tmp_tar)}); echo \"transferencia arquivos: pacote WordPress ${bytes} bytes\"; fi; "
             f"docker exec {STATE.target.target_container} sh -lc {shlex.quote(f'mkdir -p {cfg.wp_path}; test -d {cfg.wp_path}')} || exit 45; "
             "extract_rc=0; "
             f"if [ \"$tar_rc\" -le 1 ] && test -s {shlex.quote(tmp_tar)}; then "
             f"docker exec {STATE.target.target_container} sh -lc {shlex.quote(clean_target)} || exit 46; "
             f"cat {shlex.quote(tmp_tar)} | docker exec -i {STATE.target.target_container} tar -C {shlex.quote(cfg.wp_path)} -xzf - || extract_rc=$?; "
+            "if [ \"$extract_rc\" -eq 0 ]; then echo 'transferencia arquivos: extracao no destino concluida'; fi; "
             "else extract_rc=91; fi; "
             "if [ \"$extract_rc\" -ne 0 ]; then "
             "echo \"tar falhou; tentando fallback docker cp (tar_rc=$tar_rc extract_rc=$extract_rc)\" >&2; "
@@ -644,15 +647,25 @@ def mysql_exec(target: SshTarget, container: str, user: str, password: str, sql:
         raise RuntimeError(f"Falha MySQL rc={cp.returncode}: {redact(detail) or 'sem detalhe retornado'}")
 
 
+def mysql_query_text(target: SshTarget, container: str, user: str, password: str, sql: str) -> str:
+    remember_secret(password)
+    cmd = f"docker exec -i {container} mysql -u{shlex.quote(user)} -p{shlex.quote(password)} -NBe {shlex.quote(sql)}"
+    cp = ssh(target, cmd, capture=True, check=False)
+    if cp.returncode != 0:
+        stdout = cp.stdout.decode("utf-8", errors="replace").strip() if cp.stdout else ""
+        stderr = cp.stderr.decode("utf-8", errors="replace").strip() if cp.stderr else ""
+        detail = "\n".join(part for part in [stdout, stderr] if part)
+        raise RuntimeError(f"Falha consulta MySQL rc={cp.returncode}: {redact(detail) or 'sem detalhe retornado'}")
+    return cp.stdout.decode("utf-8", errors="replace").strip()
+
+
 def clone_database() -> None:
     cfg = STATE.config
     assert cfg
     generate_db_names()
+    wait_mysql_ready()
     exists_sql = f"SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME='{sql_escape(cfg.target_db_name)}';"
-    existing = ssh_text(
-        cfg.target_ssh,
-        f"docker exec -i {STATE.target.mysql_container} mysql -u{shlex.quote(cfg.target_mysql_root_user)} -p{shlex.quote(cfg.target_mysql_root_password)} -NBe {shlex.quote(exists_sql)}",
-    )
+    existing = mysql_query_text(cfg.target_ssh, STATE.target.mysql_container, cfg.target_mysql_root_user, cfg.target_mysql_root_password, exists_sql)
     if existing and not cfg.allow_existing_target:
         raise RuntimeError(f"Banco destino ja existe: {cfg.target_db_name}")
 
@@ -673,6 +686,7 @@ def clone_database() -> None:
     log("+ duplicar banco via mysqldump/mysql por SSH")
     if cfg.dry_run:
         return
+    log("transferencia banco: dump MySQL iniciado")
     p1 = subprocess.Popen(src_dump_cmd, stdout=subprocess.PIPE)
     p2 = subprocess.Popen(dst_restore_cmd, stdin=p1.stdout)
     assert p1.stdout is not None
@@ -681,6 +695,7 @@ def clone_database() -> None:
     rc1 = p1.wait()
     if rc1 != 0 or rc2 != 0:
         raise RuntimeError(f"Falha ao duplicar banco: dump_rc={rc1}, restore_rc={rc2}")
+    log("transferencia banco: restore MySQL concluido")
 
 
 def sql_escape(value: str) -> str:
