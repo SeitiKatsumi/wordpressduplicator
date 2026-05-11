@@ -472,7 +472,7 @@ def create_target_mysql_app() -> None:
 
     caprover_deploy_image(cfg.target_caprover, cfg.target_mysql_app, cfg.target_mysql_image)
     ensure_mysql_service_config()
-    STATE.target.mysql_container = wait_container(cfg.target_ssh, target_service, timeout=240)
+    STATE.target.mysql_container = wait_container_exec(cfg.target_ssh, target_service, timeout=240)
     wait_mysql_ready()
 
 
@@ -530,7 +530,26 @@ def deploy_target_image() -> None:
     cfg = STATE.config
     assert cfg
     caprover_deploy_image(cfg.target_caprover, cfg.target_app, STATE.source.source_image)
-    STATE.target.target_container = wait_container(cfg.target_ssh, STATE.target.target_service)
+    ensure_wordpress_service_config()
+    STATE.target.target_container = wait_container_exec(cfg.target_ssh, STATE.target.target_service, timeout=240)
+
+
+def ensure_wordpress_service_config() -> None:
+    cfg = STATE.config
+    assert cfg
+    generate_db_names()
+    service = STATE.target.target_service or captain_service(cfg.target_app)
+    env_args = [
+        f"WORDPRESS_DB_HOST={STATE.target.target_db_host}",
+        f"WORDPRESS_DB_NAME={cfg.target_db_name}",
+        f"WORDPRESS_DB_USER={cfg.target_db_user}",
+        f"WORDPRESS_DB_PASSWORD={cfg.target_db_password}",
+    ]
+    update_parts = ["docker", "service", "update"]
+    for item in env_args:
+        update_parts.extend(["--env-add", item])
+    update_parts.append(service)
+    ssh(cfg.target_ssh, " ".join(shlex.quote(part) for part in update_parts))
 
 
 def wait_container(target: SshTarget, service: str, timeout: int = 180) -> str:
@@ -545,9 +564,36 @@ def wait_container(target: SshTarget, service: str, timeout: int = 180) -> str:
     raise RuntimeError(f"Container nao subiu para service {service}")
 
 
+def wait_container_exec(target: SshTarget, service: str, container: str = "", timeout: int = 180) -> str:
+    for _ in range(max(1, timeout // 3)):
+        current = container or ssh_text(
+            target,
+            f"docker ps --filter {shlex.quote('label=com.docker.swarm.service.name=' + service)} --format '{{{{.ID}}}}' | head -n 1",
+        )
+        if current:
+            ok = ssh_text(target, f"docker exec {current} sh -lc 'test -d / && echo yes' 2>/dev/null || true")
+            if ok == "yes":
+                return current
+        container = ""
+        time.sleep(3)
+    raise RuntimeError(f"Container nao aceitou docker exec para service {service}")
+
+
 def copy_files() -> None:
     cfg = STATE.config
     assert cfg
+    STATE.source.source_container = wait_container_exec(
+        cfg.source_ssh,
+        STATE.source.source_service,
+        STATE.source.source_container,
+        timeout=60,
+    )
+    STATE.target.target_container = wait_container_exec(
+        cfg.target_ssh,
+        STATE.target.target_service,
+        STATE.target.target_container,
+        timeout=240,
+    )
     ssh(
         cfg.source_ssh,
         f"docker exec {STATE.source.source_container} sh -lc {shlex.quote(f'test -d {cfg.wp_path} && test -f {cfg.wp_path}/wp-config.php')}",
@@ -569,7 +615,7 @@ def copy_files() -> None:
             f"echo 'transferencia arquivos: preparando volume WordPress'; "
             "tar_rc=0; "
             f"docker exec {STATE.source.source_container} sh -lc {shlex.quote(f'tar --warning=no-file-changed --ignore-failed-read -C {cfg.wp_path} -czf - .')} > {shlex.quote(tmp_tar)} || tar_rc=$?; "
-            f"if test -s {shlex.quote(tmp_tar)}; then bytes=$(stat -c%s {shlex.quote(tmp_tar)} 2>/dev/null || wc -c < {shlex.quote(tmp_tar)}); echo \"transferencia arquivos: pacote WordPress ${bytes} bytes\"; fi; "
+            f"if test -s {shlex.quote(tmp_tar)}; then size_bytes=$(stat -c%s {shlex.quote(tmp_tar)} 2>/dev/null || wc -c < {shlex.quote(tmp_tar)}); echo \"transferencia arquivos: pacote WordPress ${{size_bytes}} bytes\"; fi; "
             f"docker exec {STATE.target.target_container} sh -lc {shlex.quote(f'mkdir -p {cfg.wp_path}; test -d {cfg.wp_path}')} || exit 45; "
             "extract_rc=0; "
             f"if [ \"$tar_rc\" -le 1 ] && test -s {shlex.quote(tmp_tar)}; then "
@@ -844,22 +890,22 @@ def run_flow() -> None:
         create_target_app()
         checkpoint("target_app_created")
 
-    if not done("target_image_deployed"):
-        deploy_target_image()
-        checkpoint("target_image_deployed")
-    elif not STATE.target.target_container:
-        STATE.target.target_container = wait_container(cfg.target_ssh, STATE.target.target_service)
-
-    if not done("files_copied"):
-        copy_files()
-        checkpoint("files_copied")
-
     if not done("target_mysql_app_created"):
         create_target_mysql_app()
         checkpoint("target_mysql_app_created")
     elif not STATE.target.mysql_container:
         generate_db_names()
-        STATE.target.mysql_container = wait_container(cfg.target_ssh, captain_service(cfg.target_mysql_app))
+        STATE.target.mysql_container = wait_container_exec(cfg.target_ssh, captain_service(cfg.target_mysql_app), timeout=240)
+
+    if not done("target_image_deployed"):
+        deploy_target_image()
+        checkpoint("target_image_deployed")
+    elif not STATE.target.target_container:
+        STATE.target.target_container = wait_container_exec(cfg.target_ssh, STATE.target.target_service, timeout=240)
+
+    if not done("files_copied"):
+        copy_files()
+        checkpoint("files_copied")
 
     if not done("database_cloned"):
         clone_database()
