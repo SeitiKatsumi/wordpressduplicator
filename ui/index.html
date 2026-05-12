@@ -35,6 +35,10 @@
             <span class="step__index">05</span>
             <span class="step__label">Execução</span>
           </button>
+          <button class="step" type="button" data-step="5">
+            <span class="step__index">06</span>
+            <span class="step__label">Arquivos</span>
+          </button>
         </nav>
 
         <section class="telemetry" aria-label="Telemetria">
@@ -299,6 +303,112 @@
                   <li>Search-replace serializado</li>
                   <li>Permissões e validação</li>
                 </ol>
+              </div>
+
+              <div class="screen" data-screen="5">
+                <div class="screen__header">
+                  <span class="beacon"></span>
+                  <div>
+                    <p class="section-kicker">Arquivos</p>
+                    <h2>Gerenciador do volume WordPress</h2>
+                  </div>
+                </div>
+
+                <div class="file-manager">
+                  <div class="file-toolbar">
+                    <label class="field">
+                      <span>Origem dos dados</span>
+                      <select name="fileProfile">
+                        <option value="target">Destino</option>
+                        <option value="source">Origem</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      <span>App WordPress</span>
+                      <input name="fileApp" placeholder="wp-invest-caixa" />
+                    </label>
+                    <label class="field">
+                      <span>WP path publico</span>
+                      <input name="fileWpPath" value="/var/www/html" />
+                    </label>
+                    <label class="field">
+                      <span>Pasta atual</span>
+                      <input name="filePath" value="." />
+                    </label>
+                  </div>
+
+                  <div class="file-actions">
+                    <button class="command-button" id="fileRefresh" type="button">Atualizar</button>
+                    <button class="ghost-button" id="fileParent" type="button">Subir pasta</button>
+                    <label class="toggle">
+                      <input type="checkbox" name="fileOverwrite" />
+                      <span>Sobrescrever</span>
+                    </label>
+                  </div>
+
+                  <div class="file-actions file-actions--split">
+                    <label class="field field--inline">
+                      <span>Nova pasta</span>
+                      <input name="newFolderName" placeholder="pacote" />
+                    </label>
+                    <button class="ghost-button" id="fileMkdir" type="button">Criar pasta</button>
+                  </div>
+
+                  <div class="file-upload">
+                    <label class="field">
+                      <span>Upload para a pasta atual</span>
+                      <input name="fileUpload" type="file" />
+                    </label>
+                    <button class="launch-button" id="fileUploadButton" type="button">Enviar arquivo</button>
+                  </div>
+
+                  <div class="file-progress" aria-label="Upload de arquivos">
+                    <header>
+                      <span id="fileProgressPhase">Standby</span>
+                      <strong id="fileProgressValue">0%</strong>
+                    </header>
+                    <div class="transfer__track">
+                      <span id="fileProgressBar"></span>
+                    </div>
+                    <p id="fileProgressDetail">Selecione uma app e clique em Atualizar.</p>
+                  </div>
+
+                  <div class="file-selected">
+                    <span>Selecionado</span>
+                    <strong id="selectedFileName">nenhum arquivo</strong>
+                    <div>
+                      <button class="ghost-button" id="filePreview" type="button">Visualizar</button>
+                      <button class="ghost-button" id="fileZip" type="button">Compactar ZIP</button>
+                      <button class="ghost-button" id="fileUnzip" type="button">Descompactar ZIP</button>
+                    </div>
+                  </div>
+
+                  <div class="file-browser">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Nome</th>
+                          <th>Tipo</th>
+                          <th>Tamanho</th>
+                          <th>Dono</th>
+                          <th>Permissao</th>
+                          <th>Alterado</th>
+                        </tr>
+                      </thead>
+                      <tbody id="fileList">
+                        <tr><td colspan="6">Nenhum volume carregado.</td></tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <section class="file-preview" aria-label="Preview">
+                    <header>
+                      <span>Preview seguro</span>
+                      <strong id="filePreviewName">sem arquivo</strong>
+                    </header>
+                    <pre id="filePreviewOutput">Arquivos de texto pequenos aparecem aqui.</pre>
+                  </section>
+                </div>
               </div>
             </form>
 

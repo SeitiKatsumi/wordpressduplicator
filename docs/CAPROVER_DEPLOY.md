@@ -62,6 +62,7 @@ APP_SECRET_KEY=gere-com-openssl-rand-base64-32
 DRY_RUN_DEFAULT=true
 DEFAULT_WP_PATH=/var/www/html
 CAPROVER_OVERLAY_NETWORK=captain-overlay-network
+FILE_MANAGER_MAX_UPLOAD_MB=512
 ALLOW_DOCKER_SOCKET=false
 ALLOW_STORE_SECRETS=false
 ```
@@ -132,7 +133,29 @@ Se ainda assim decidir usar Docker socket, faca isso apenas em ambiente controla
 7. Execute em modo real.
 8. Adicione dominio e HTTPS manualmente no CapRover.
 
-## 6. Healthcheck
+## 6. Gerenciador de arquivos
+
+A aba `Arquivos` usa SSH + Docker para acessar somente o volume publico da app
+WordPress selecionada. Ela nao precisa de cPanel nem de porta exposta para FTP.
+
+Operacoes disponiveis:
+
+- listar e navegar em `/var/www/html`;
+- criar pastas;
+- enviar arquivos com progresso visual;
+- compactar arquivo/pasta em `.zip`;
+- descompactar `.zip`;
+- visualizar arquivos de texto pequenos.
+
+Protecoes:
+
+- caminhos absolutos e `../` sao recusados;
+- uploads de `wp-config.php` e `.env` sao bloqueados;
+- arquivos existentes nao sao substituidos sem marcar `Sobrescrever`;
+- arquivos enviados ficam temporariamente em `/data/file-manager/uploads`;
+- chaves SSH coladas sao gravadas temporariamente e removidas apos a requisicao.
+
+## 7. Healthcheck
 
 Depois do deploy, abra:
 
@@ -153,7 +176,7 @@ Resultado esperado:
 }
 ```
 
-## 7. Dados persistidos no Postgres
+## 8. Dados persistidos no Postgres
 
 O Postgres deve guardar:
 
@@ -166,7 +189,7 @@ O Postgres deve guardar:
 
 Credenciais sensiveis devem ser criptografadas com `APP_SECRET_KEY` ou solicitadas em tempo de execucao.
 
-## 8. Checklist de seguranca
+## 9. Checklist de seguranca
 
 - Nao salvar senhas em texto puro.
 - Mascarar segredos em logs.
@@ -184,7 +207,7 @@ Credenciais sensiveis devem ser criptografadas com `APP_SECRET_KEY` ou solicitad
 - Registrar cada checkpoint.
 - Permitir retomada apos falha.
 
-## 9. Portas
+## 10. Portas
 
 Dentro do CapRover, a app escuta em:
 

@@ -1,6 +1,16 @@
 import http from "node:http";
-import { createReadStream, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { extname, join, resolve } from "node:path";
+import {
+  chmodSync,
+  createReadStream,
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, extname, join, posix, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import pg from "pg";
@@ -14,8 +24,22 @@ const databaseUrl = process.env.DATABASE_URL || "";
 const allowStoreSecrets = process.env.ALLOW_STORE_SECRETS === "true";
 const dataDir = process.env.WORDPRESS_DUPLICATOR_DATA_DIR || "/data";
 const jobTimeoutSeconds = Number(process.env.JOB_TIMEOUT_SECONDS || 7200);
+const fileManagerMaxUploadMb = Number(process.env.FILE_MANAGER_MAX_UPLOAD_MB || 512);
+const fileManagerMaxUploadBytes =
+  (Number.isFinite(fileManagerMaxUploadMb) && fileManagerMaxUploadMb > 0 ? fileManagerMaxUploadMb : 512) *
+  1024 *
+  1024;
 const runningJobs = new Map();
+const uploadSessions = new Map();
 const caproverAppPattern = /^[a-zA-Z0-9][a-zA-Z0-9-]{1,62}$/;
+
+const uploadSessionJanitor = setInterval(() => {
+  const now = Date.now();
+  for (const [id, session] of uploadSessions.entries()) {
+    if (session.expiresAt < now) uploadSessions.delete(id);
+  }
+}, 60_000);
+uploadSessionJanitor.unref?.();
 
 const contentTypes = {
   ".css": "text/css; charset=utf-8",
@@ -87,6 +111,503 @@ async function readBody(request) {
   for await (const chunk of request) chunks.push(chunk);
   const raw = Buffer.concat(chunks).toString("utf-8");
   return raw ? JSON.parse(raw) : {};
+}
+
+function shQuote(value) {
+  return `'${String(value ?? "").replaceAll("'", "'\"'\"'")}'`;
+}
+
+function normalizePrivateKey(value) {
+  return String(value || "").replace(/\r\n/g, "\n").replace(/\r/g, "\n").trim() + "\n";
+}
+
+function safeRelativePath(value = ".") {
+  const text = String(value || ".").trim().replaceAll("\\", "/");
+  if (!text || text === ".") return ".";
+  if (text.startsWith("/") || text.includes("\0")) {
+    throw new Error("Caminho invalido: use caminho relativo dentro do WordPress.");
+  }
+  const parts = text.split("/").filter(Boolean);
+  if (parts.some((part) => part === "." || part === ".." || /[\x00-\x1f]/.test(part))) {
+    throw new Error("Caminho invalido: navegacao fora do WordPress bloqueada.");
+  }
+  return parts.join("/");
+}
+
+function safeFileName(value) {
+  const name = String(value || "").trim();
+  if (
+    !name ||
+    name === "." ||
+    name === ".." ||
+    name.includes("/") ||
+    name.includes("\\") ||
+    name.includes("\0") ||
+    /[\x00-\x1f]/.test(name)
+  ) {
+    throw new Error("Nome de arquivo invalido.");
+  }
+  return name.slice(0, 180);
+}
+
+function safeAppName(value, label = "app") {
+  const name = String(value || "").trim();
+  if (!caproverAppPattern.test(name)) {
+    throw new Error(`${label} invalida. Use apenas letras, numeros e hifen.`);
+  }
+  return name;
+}
+
+function safeWpPath(value) {
+  const path = String(value || "/var/www/html").trim().replace(/\/+$/g, "") || "/var/www/html";
+  if (!path.startsWith("/") || path.includes("\0") || path.split("/").includes("..")) {
+    throw new Error("WP path invalido.");
+  }
+  return path;
+}
+
+function joinWpPath(wpPath, relativePath = ".") {
+  const base = safeWpPath(wpPath);
+  const rel = safeRelativePath(relativePath);
+  return rel === "." ? base : `${base}/${rel}`;
+}
+
+function parentRelativePath(relativePath = ".") {
+  const rel = safeRelativePath(relativePath);
+  if (rel === ".") return ".";
+  const parent = posix.dirname(rel);
+  return parent === "." ? "." : parent;
+}
+
+function isProtectedWrite(relativePath = ".", fileName = "") {
+  const full = safeRelativePath(relativePath) === "." ? safeFileName(fileName) : `${safeRelativePath(relativePath)}/${safeFileName(fileName)}`;
+  const lower = full.toLowerCase();
+  return lower === "wp-config.php" || lower.endsWith("/wp-config.php") || lower === ".env" || lower.endsWith("/.env");
+}
+
+function serviceName(app) {
+  return `srv-captain--${app}`;
+}
+
+function buildFileContext(body = {}) {
+  const config = body.config || {};
+  const ssh = config.ssh || {};
+  const host = String(ssh.host || "").trim();
+  const user = String(ssh.user || "root").trim();
+  const portValue = Number(ssh.port || 22);
+  const keyPath = String(ssh.keyPath || "").trim();
+  const privateKey = String(ssh.privateKey || "");
+  if (!host) throw new Error("SSH host obrigatorio.");
+  if (!user) throw new Error("SSH usuario obrigatorio.");
+  if (!Number.isInteger(portValue) || portValue < 1 || portValue > 65535) {
+    throw new Error("Porta SSH invalida.");
+  }
+  if (keyPath && keyPath !== "****" && !keyPath.startsWith("/") && !keyPath.startsWith("~")) {
+    throw new Error("Caminho da chave SSH precisa ser absoluto dentro do container.");
+  }
+  if (!keyPath && !privateKey.includes("PRIVATE KEY")) {
+    throw new Error("Informe caminho de chave SSH ou cole a chave privada completa.");
+  }
+  return {
+    app: safeAppName(config.app, "App WordPress"),
+    wpPath: safeWpPath(config.wpPath),
+    ssh: {
+      host,
+      user,
+      port: portValue,
+      keyPath: keyPath === "****" ? "" : keyPath,
+      privateKey,
+    },
+  };
+}
+
+function prepareSshKey(ssh) {
+  if (ssh.privateKey && ssh.privateKey.includes("PRIVATE KEY")) {
+    const keyDir = resolve(dataDir, "file-manager", "keys");
+    mkdirSync(keyDir, { recursive: true });
+    const keyPath = resolve(keyDir, `${randomUUID()}.key`);
+    writeFileSync(keyPath, normalizePrivateKey(ssh.privateKey), { mode: 0o600 });
+    try {
+      chmodSync(keyPath, 0o600);
+    } catch {
+      // Some filesystems already honor the requested mode.
+    }
+    return {
+      keyPath,
+      cleanup: () => {
+        try {
+          unlinkSync(keyPath);
+        } catch {
+          // Temporary SSH keys are best-effort cleaned after each request.
+        }
+      },
+    };
+  }
+  return { keyPath: ssh.keyPath, cleanup: () => {} };
+}
+
+async function runLocal(command, args, options = {}) {
+  const child = spawn(command, args, { cwd: root, stdio: ["pipe", "pipe", "pipe"] });
+  const stdout = [];
+  const stderr = [];
+  let settled = false;
+  const timeout = options.timeoutMs
+    ? setTimeout(() => {
+        if (!settled) child.kill("SIGTERM");
+      }, options.timeoutMs)
+    : null;
+
+  child.stdout.on("data", (chunk) => stdout.push(chunk));
+  child.stderr.on("data", (chunk) => stderr.push(chunk));
+  child.on("error", (error) => {
+    stderr.push(Buffer.from(error.message));
+  });
+
+  if (options.inputFile) {
+    await new Promise((resolvePromise, rejectPromise) => {
+      const input = createReadStream(options.inputFile);
+      input.on("error", rejectPromise);
+      child.stdin.on("error", rejectPromise);
+      child.stdin.on("finish", resolvePromise);
+      input.pipe(child.stdin);
+    });
+  } else if (options.inputBuffer) {
+    child.stdin.end(options.inputBuffer);
+  } else {
+    child.stdin.end();
+  }
+
+  const code = await new Promise((resolvePromise) => {
+    child.on("close", (exitCode) => resolvePromise(exitCode ?? 1));
+  });
+  settled = true;
+  if (timeout) clearTimeout(timeout);
+  const result = {
+    code,
+    stdout: Buffer.concat(stdout).toString("utf-8"),
+    stderr: Buffer.concat(stderr).toString("utf-8"),
+  };
+  if (options.check !== false && code !== 0) {
+    const detail = result.stderr || result.stdout || `${command} exited with code ${code}`;
+    throw new Error(detail.slice(0, 1200));
+  }
+  return result;
+}
+
+async function sshExec(context, remoteCommand, options = {}) {
+  const args = [
+    "-p",
+    String(context.ssh.port),
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "StrictHostKeyChecking=accept-new",
+    "-i",
+    context.keyPath,
+    `${context.ssh.user}@${context.ssh.host}`,
+    remoteCommand,
+  ];
+  return runLocal("ssh", args, { timeoutMs: options.timeoutMs || 120_000, inputFile: options.inputFile, check: options.check });
+}
+
+function containerIdSnippet(app) {
+  return `cid=$(docker ps --filter label=com.docker.swarm.service.name=${shQuote(serviceName(app))} --format '{{.ID}}' | head -n 1); test -n "$cid" || { echo 'Container WordPress nao encontrado' >&2; exit 40; }`;
+}
+
+function parseListing(stdout) {
+  return stdout
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .map((line) => {
+      const [kind, rawName, rawSize, rawMtime, mode, owner, group] = line.split("\t");
+      const name = String(rawName || "").replace(/^\.\//, "");
+      return {
+        name,
+        type: kind === "directory" ? "directory" : kind === "symbolic link" ? "symlink" : "file",
+        size: Number(rawSize || 0),
+        mtime: Number(rawMtime || 0),
+        mode: mode || "",
+        owner: owner || "",
+        group: group || "",
+      };
+    })
+    .sort((a, b) => {
+      if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
+      return a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" });
+    });
+}
+
+async function fileList(request, response) {
+  const body = await readBody(request);
+  const context = buildFileContext(body);
+  const relPath = safeRelativePath(body.path || ".");
+  const { keyPath, cleanup } = prepareSshKey(context.ssh);
+  context.keyPath = keyPath;
+  const containerDir = joinWpPath(context.wpPath, relPath);
+  try {
+    const command = [
+      "set -euo pipefail",
+      containerIdSnippet(context.app),
+      `docker exec "$cid" sh -lc ${shQuote(`test -d ${shQuote(containerDir)} && cd ${shQuote(containerDir)} && find . -mindepth 1 -maxdepth 1 -exec stat -c '%F\t%n\t%s\t%Y\t%a\t%U\t%G' {} \\;`)}`,
+    ].join("; ");
+    const result = await sshExec(context, command);
+    json(response, 200, {
+      ok: true,
+      app: context.app,
+      path: relPath,
+      wpPath: context.wpPath,
+      parent: parentRelativePath(relPath),
+      files: parseListing(result.stdout),
+    });
+  } finally {
+    cleanup();
+  }
+}
+
+async function fileMkdir(request, response) {
+  const body = await readBody(request);
+  const context = buildFileContext(body);
+  const relPath = safeRelativePath(body.path || ".");
+  const dirName = safeFileName(body.name || "");
+  const { keyPath, cleanup } = prepareSshKey(context.ssh);
+  context.keyPath = keyPath;
+  const containerDir = joinWpPath(context.wpPath, relPath === "." ? dirName : `${relPath}/${dirName}`);
+  try {
+    const command = [
+      "set -euo pipefail",
+      containerIdSnippet(context.app),
+      `docker exec "$cid" sh -lc ${shQuote(`mkdir -p ${shQuote(containerDir)} && (chown www-data:www-data ${shQuote(containerDir)} 2>/dev/null || true)`)}`,
+    ].join("; ");
+    await sshExec(context, command);
+    json(response, 200, { ok: true, path: relPath, name: dirName });
+  } finally {
+    cleanup();
+  }
+}
+
+async function filePreview(request, response) {
+  const body = await readBody(request);
+  const context = buildFileContext(body);
+  const relPath = safeRelativePath(body.path || ".");
+  const { keyPath, cleanup } = prepareSshKey(context.ssh);
+  context.keyPath = keyPath;
+  const containerFile = joinWpPath(context.wpPath, relPath);
+  try {
+    const script = [
+      "set -euo pipefail",
+      containerIdSnippet(context.app),
+      `docker exec "$cid" sh -lc ${shQuote(`test -f ${shQuote(containerFile)}; bytes=$(wc -c < ${shQuote(containerFile)}); test "$bytes" -le 262144 || { echo 'Arquivo muito grande para preview' >&2; exit 47; }; sed -n '1,240p' ${shQuote(containerFile)}`)}`,
+    ].join("; ");
+    const result = await sshExec(context, script);
+    json(response, 200, { ok: true, path: relPath, content: result.stdout });
+  } finally {
+    cleanup();
+  }
+}
+
+async function createUploadSession(request, response) {
+  const body = await readBody(request);
+  const context = buildFileContext(body);
+  const relPath = safeRelativePath(body.path || ".");
+  const fileName = safeFileName(body.fileName || "");
+  if (isProtectedWrite(relPath, fileName) && body.allowProtected !== true) {
+    json(response, 400, { ok: false, error: "Upload de wp-config.php/.env bloqueado por seguranca." });
+    return;
+  }
+  const id = randomUUID();
+  const expiresAt = Date.now() + 10 * 60 * 1000;
+  uploadSessions.set(id, {
+    context,
+    path: relPath,
+    fileName,
+    overwrite: body.overwrite === true,
+    expiresAt,
+  });
+  json(response, 201, { ok: true, id, maxBytes: fileManagerMaxUploadBytes, expiresAt });
+}
+
+async function streamUploadToFile(request, targetPath) {
+  const contentLength = Number(request.headers["content-length"] || 0);
+  if (contentLength && contentLength > fileManagerMaxUploadBytes) {
+    throw new Error(`Arquivo acima do limite configurado (${Math.round(fileManagerMaxUploadBytes / 1024 / 1024)} MB).`);
+  }
+  await new Promise((resolvePromise, rejectPromise) => {
+    let received = 0;
+    const output = createWriteStream(targetPath, { mode: 0o600 });
+    request.on("data", (chunk) => {
+      received += chunk.length;
+      if (received > fileManagerMaxUploadBytes) {
+        output.destroy();
+        request.destroy(new Error("Arquivo acima do limite configurado."));
+      }
+    });
+    request.on("error", rejectPromise);
+    output.on("error", rejectPromise);
+    output.on("finish", resolvePromise);
+    request.pipe(output);
+  });
+  return contentLength;
+}
+
+async function uploadFile(request, response, sessionId) {
+  const session = uploadSessions.get(sessionId);
+  if (!session || session.expiresAt < Date.now()) {
+    uploadSessions.delete(sessionId);
+    json(response, 404, { ok: false, error: "Sessao de upload expirada. Inicie o upload novamente." });
+    return;
+  }
+  uploadSessions.delete(sessionId);
+  const uploadDir = resolve(dataDir, "file-manager", "uploads");
+  mkdirSync(uploadDir, { recursive: true });
+  const localPath = resolve(uploadDir, `${sessionId}-${session.fileName}`);
+  const { context } = session;
+  const { keyPath, cleanup } = prepareSshKey(context.ssh);
+  context.keyPath = keyPath;
+  const remoteTemp = `/tmp/wpclone-upload-${sessionId}-${session.fileName.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+  const containerDir = joinWpPath(context.wpPath, session.path);
+  const containerDest = joinWpPath(context.wpPath, session.path === "." ? session.fileName : `${session.path}/${session.fileName}`);
+  try {
+    await streamUploadToFile(request, localPath);
+    await sshExec(context, `cat > ${shQuote(remoteTemp)}`, { inputFile: localPath, timeoutMs: 30 * 60 * 1000 });
+    const overwriteGuard = session.overwrite
+      ? "true"
+      : `docker exec "$cid" sh -lc ${shQuote(`test ! -e ${shQuote(containerDest)}`)} || { echo 'Arquivo destino ja existe; marque sobrescrever para substituir' >&2; exit 49; }`;
+    const command = [
+      "set -euo pipefail",
+      containerIdSnippet(context.app),
+      `docker exec "$cid" sh -lc ${shQuote(`mkdir -p ${shQuote(containerDir)}`)}`,
+      overwriteGuard,
+      `docker cp ${shQuote(remoteTemp)} "$cid":${shQuote(containerDest)}`,
+      `rm -f ${shQuote(remoteTemp)}`,
+      `docker exec "$cid" sh -lc ${shQuote(`chown www-data:www-data ${shQuote(containerDest)} 2>/dev/null || true`)}`,
+    ].join("; ");
+    await sshExec(context, command, { timeoutMs: 30 * 60 * 1000 });
+    json(response, 200, { ok: true, path: session.path, fileName: session.fileName });
+  } finally {
+    cleanup();
+    try {
+      unlinkSync(localPath);
+    } catch {
+      // Best-effort cleanup.
+    }
+  }
+}
+
+function pythonZipCode(src, out) {
+  return [
+    "import os, zipfile",
+    `src=${JSON.stringify(src)}`,
+    `out=${JSON.stringify(out)}`,
+    "base=os.path.basename(src.rstrip('/')) or 'arquivo'",
+    "zf=zipfile.ZipFile(out,'w',zipfile.ZIP_DEFLATED)",
+    "try:",
+    "    if os.path.isdir(src):",
+    "        for root, dirs, files in os.walk(src):",
+    "            dirs[:] = [d for d in dirs if d not in {'.git','node_modules'}]",
+    "            for name in files:",
+    "                path=os.path.join(root,name)",
+    "                zf.write(path, os.path.join(base, os.path.relpath(path,src)))",
+    "    else:",
+    "        zf.write(src, os.path.basename(src))",
+    "finally:",
+    "    zf.close()",
+  ].join("\n");
+}
+
+function pythonUnzipCode(zipPath, destDir, containerDest, overwrite) {
+  return [
+    "import os, shlex, subprocess, sys, zipfile",
+    `zip_path=${JSON.stringify(zipPath)}`,
+    `dest=${JSON.stringify(destDir)}`,
+    "cid=os.environ['CID']",
+    `container_dest=${JSON.stringify(containerDest)}`,
+    `overwrite=${overwrite ? "True" : "False"}`,
+    "with zipfile.ZipFile(zip_path) as z:",
+    "    for member in z.infolist():",
+    "        name=member.filename.replace('\\\\','/')",
+    "        parts=[p for p in name.split('/') if p]",
+    "        if name.startswith('/') or '..' in parts:",
+    "            print('ZIP bloqueado: contem caminho inseguro', file=sys.stderr)",
+    "            sys.exit(64)",
+    "    z.extractall(dest)",
+    "if not overwrite:",
+    "    for name in os.listdir(dest):",
+    "        target=os.path.join(container_dest, name)",
+    "        cmd='test ! -e ' + shlex.quote(target)",
+    "        result=subprocess.run(['docker','exec',cid,'sh','-lc',cmd])",
+    "        if result.returncode != 0:",
+    "            print('Destino ja contem: ' + target, file=sys.stderr)",
+    "            sys.exit(58)",
+  ].join("\n");
+}
+
+async function zipFile(request, response) {
+  const body = await readBody(request);
+  const context = buildFileContext(body);
+  const relPath = safeRelativePath(body.path || ".");
+  const archiveName = safeFileName(body.archiveName || `${basename(relPath === "." ? "wordpress-public" : relPath)}.zip`);
+  const archiveRel = safeRelativePath(`${parentRelativePath(relPath)}/${archiveName}`);
+  if (isProtectedWrite(parentRelativePath(relPath), archiveName)) {
+    json(response, 400, { ok: false, error: "Nome de ZIP reservado bloqueado." });
+    return;
+  }
+  const { keyPath, cleanup } = prepareSshKey(context.ssh);
+  context.keyPath = keyPath;
+  const id = randomUUID();
+  const work = `/tmp/wpclone-zip-${id}`;
+  const containerSource = joinWpPath(context.wpPath, relPath);
+  const containerArchive = joinWpPath(context.wpPath, archiveRel);
+  try {
+    const code = pythonZipCode(`${work}/source`, `${work}/archive.zip`);
+    const command = [
+      "set -euo pipefail",
+      containerIdSnippet(context.app),
+      `rm -rf ${shQuote(work)} && mkdir -p ${shQuote(work)}`,
+      `docker cp "$cid":${shQuote(containerSource)} ${shQuote(`${work}/source`)}`,
+      `python3 -c ${shQuote(code)}`,
+      `docker cp ${shQuote(`${work}/archive.zip`)} "$cid":${shQuote(containerArchive)}`,
+      `rm -rf ${shQuote(work)}`,
+    ].join("; ");
+    await sshExec(context, command, { timeoutMs: 30 * 60 * 1000 });
+    json(response, 200, { ok: true, archive: archiveRel });
+  } finally {
+    cleanup();
+  }
+}
+
+async function unzipFile(request, response) {
+  const body = await readBody(request);
+  const context = buildFileContext(body);
+  const relPath = safeRelativePath(body.path || ".");
+  const destinationPath = safeRelativePath(body.destinationPath || parentRelativePath(relPath));
+  if (!relPath.toLowerCase().endsWith(".zip")) {
+    json(response, 400, { ok: false, error: "Selecione um arquivo .zip para descompactar." });
+    return;
+  }
+  const { keyPath, cleanup } = prepareSshKey(context.ssh);
+  context.keyPath = keyPath;
+  const id = randomUUID();
+  const work = `/tmp/wpclone-unzip-${id}`;
+  const containerZip = joinWpPath(context.wpPath, relPath);
+  const containerDest = joinWpPath(context.wpPath, destinationPath);
+  try {
+    const command = [
+      "set -euo pipefail",
+      containerIdSnippet(context.app),
+      `rm -rf ${shQuote(work)} && mkdir -p ${shQuote(`${work}/extracted`)}`,
+      `docker cp "$cid":${shQuote(containerZip)} ${shQuote(`${work}/archive.zip`)}`,
+      `CID="$cid" python3 -c ${shQuote(pythonUnzipCode(`${work}/archive.zip`, `${work}/extracted`, containerDest, body.overwrite === true))}`,
+      `docker exec "$cid" sh -lc ${shQuote(`mkdir -p ${shQuote(containerDest)}`)}`,
+      `docker cp ${shQuote(`${work}/extracted/.`)} "$cid":${shQuote(`${containerDest}/`)}`,
+      `docker exec "$cid" sh -lc ${shQuote(`chown -R www-data:www-data ${shQuote(containerDest)} 2>/dev/null || true`)}`,
+      `rm -rf ${shQuote(work)}`,
+    ].join("; ");
+    await sshExec(context, command, { timeoutMs: 30 * 60 * 1000 });
+    json(response, 200, { ok: true, extractedTo: destinationPath });
+  } finally {
+    cleanup();
+  }
 }
 
 async function initDb() {
@@ -416,6 +937,7 @@ async function health(response) {
       dataDir,
       dryRunDefault: process.env.DRY_RUN_DEFAULT !== "false",
       allowStoreSecrets,
+      fileManagerMaxUploadMb: Math.round(fileManagerMaxUploadBytes / 1024 / 1024),
     },
   });
 }
@@ -466,6 +988,42 @@ const server = http.createServer(async (request, response) => {
     const runMatch = url.pathname.match(/^\/api\/jobs\/([0-9a-f-]+)\/run$/);
     if (runMatch && request.method === "POST") {
       await startExistingJob(request, response, runMatch[1]);
+      return;
+    }
+
+    if (url.pathname === "/api/files/list" && request.method === "POST") {
+      await fileList(request, response);
+      return;
+    }
+
+    if (url.pathname === "/api/files/mkdir" && request.method === "POST") {
+      await fileMkdir(request, response);
+      return;
+    }
+
+    if (url.pathname === "/api/files/preview" && request.method === "POST") {
+      await filePreview(request, response);
+      return;
+    }
+
+    if (url.pathname === "/api/files/upload-session" && request.method === "POST") {
+      await createUploadSession(request, response);
+      return;
+    }
+
+    const uploadMatch = url.pathname.match(/^\/api\/files\/upload\/([0-9a-f-]+)$/);
+    if (uploadMatch && request.method === "PUT") {
+      await uploadFile(request, response, uploadMatch[1]);
+      return;
+    }
+
+    if (url.pathname === "/api/files/zip" && request.method === "POST") {
+      await zipFile(request, response);
+      return;
+    }
+
+    if (url.pathname === "/api/files/unzip" && request.method === "POST") {
+      await unzipFile(request, response);
       return;
     }
 

@@ -14,6 +14,7 @@ Responsabilidades:
 - acompanhar execucao;
 - consultar historico;
 - exportar relatorio.
+- gerenciar arquivos do volume WordPress via backend seguro.
 
 ### Wizard CLI
 
@@ -47,12 +48,28 @@ Responsabilidades:
 - registrar logs mascarados;
 - permitir repeticao de clonagens futuras.
 
+### Gerenciador de arquivos
+
+Local: `server.mjs` + aba `Arquivos` em `ui/`
+
+Responsabilidades:
+
+- resolver a app WordPress pelo service `srv-captain--nome-da-app`;
+- confinar operacoes ao `WP path` informado, normalmente `/var/www/html`;
+- listar arquivos e pastas;
+- criar diretorios;
+- receber uploads com progresso visual;
+- copiar uploads para o container com `docker cp`;
+- compactar e descompactar `.zip` usando area temporaria no host;
+- bloquear caminhos perigosos, `../`, paths absolutos e escrita em `wp-config.php`/`.env`.
+
 ## Fluxo futuro da UI com backend
 
 ```text
 UI -> Backend Node -> Postgres
               |
               +-> wizard.py / jobs operacionais
+              +-> gerenciador de arquivos por SSH + docker cp
               +-> SSH origem/destino
               +-> CapRover API/CLI
               +-> MySQL dump/restore

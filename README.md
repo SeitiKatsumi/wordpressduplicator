@@ -12,6 +12,8 @@ Wizard para duplicar uma instalacao WordPress hospedada no CapRover, criando aut
 - correcao de permissoes;
 - validacao final;
 - relatorio auditavel.
+- gerenciador de arquivos para o volume publico do WordPress, com upload, listagem,
+  preview de textos, compactacao ZIP e descompactacao segura.
 
 O modulo nao aponta DNS, nao adiciona dominio no CapRover e nao ativa HTTPS. Essas etapas ficam manuais, como solicitado.
 
@@ -47,6 +49,31 @@ Resumo:
 7. Faca deploy usando `captain-definition`.
 
 O app Docker serve a UI web, conecta no Postgres para registrar jobs/historico/auditoria e dispara o `wizard_runner.py` em background quando a clonagem real e confirmada na UI. A execucao real exige desativar dry-run e digitar `EXECUTAR`.
+
+## Gerenciador de arquivos
+
+A aba `Arquivos` permite gerenciar a pasta publica do WordPress, normalmente
+`/var/www/html`, usando as mesmas credenciais SSH do wizard.
+
+Recursos:
+
+- listar arquivos e pastas do volume da app WordPress escolhida;
+- navegar entre pastas;
+- criar novas pastas;
+- fazer upload com barra de progresso;
+- bloquear upload direto de `wp-config.php` e `.env` por seguranca;
+- evitar sobrescrita acidental, a menos que `Sobrescrever` esteja marcado;
+- visualizar arquivos de texto pequenos;
+- compactar arquivo/pasta em `.zip`;
+- descompactar `.zip` com bloqueio de path traversal (`../` ou caminho absoluto).
+
+O upload e preparado em `/data/file-manager/uploads` e depois enviado ao host por
+SSH, entrando no container WordPress via `docker cp`. Para ajustar o limite de
+upload, configure:
+
+```env
+FILE_MANAGER_MAX_UPLOAD_MB=512
+```
 
 ## Pre-requisitos locais
 

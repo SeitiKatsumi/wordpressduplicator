@@ -18,6 +18,21 @@ const telemetryState = document.querySelector("#telemetryState");
 const transferPhase = document.querySelector("#transferPhase");
 const transferBar = document.querySelector("#transferBar");
 const transferDetail = document.querySelector("#transferDetail");
+const fileRefreshButton = document.querySelector("#fileRefresh");
+const fileParentButton = document.querySelector("#fileParent");
+const fileMkdirButton = document.querySelector("#fileMkdir");
+const fileUploadButton = document.querySelector("#fileUploadButton");
+const filePreviewButton = document.querySelector("#filePreview");
+const fileZipButton = document.querySelector("#fileZip");
+const fileUnzipButton = document.querySelector("#fileUnzip");
+const fileList = document.querySelector("#fileList");
+const fileProgressPhase = document.querySelector("#fileProgressPhase");
+const fileProgressValue = document.querySelector("#fileProgressValue");
+const fileProgressBar = document.querySelector("#fileProgressBar");
+const fileProgressDetail = document.querySelector("#fileProgressDetail");
+const selectedFileName = document.querySelector("#selectedFileName");
+const filePreviewName = document.querySelector("#filePreviewName");
+const filePreviewOutput = document.querySelector("#filePreviewOutput");
 const canvas = document.querySelector("#radarCanvas");
 const ctx = canvas.getContext("2d");
 
@@ -25,6 +40,7 @@ let currentStep = 0;
 let progress = 0;
 let sweep = 0;
 let activeJobPoll = null;
+let selectedFile = null;
 
 const transferStages = [
   ["preflight", 8, "Validando SSH e Docker"],
@@ -232,6 +248,9 @@ function fillFormFromConfig(config) {
   set("targetDbName", database.targetDbName);
   set("targetDbUser", database.targetDbUser);
   set("targetDbPassword", "");
+  set("fileApp", target.app || source.app);
+  set("fileWpPath", target.wpPath || "/var/www/html");
+  set("filePath", ".");
 
   setChecked("dryRun", execution.dryRun !== false);
   setChecked("allowExistingTarget", execution.allowExistingTarget);
@@ -357,6 +376,15 @@ function refreshPreview() {
   document.querySelector("#volumePreview").textContent = data.wpPath || "/var/www/html";
   telemetryMode.textContent = data.dryRun ? "DRY" : "LIVE";
   telemetryRisk.textContent = data.allowExistingTarget ? "MÉDIO" : "BAIXO";
+  syncFileDefaults(data);
+}
+
+function syncFileDefaults(data = formData()) {
+  if (!form.elements.fileApp) return;
+  const profile = form.elements.fileProfile.value || "target";
+  const preferredApp = profile === "source" ? data.sourceApp : data.targetApp || data.sourceApp;
+  if (!form.elements.fileApp.value && preferredApp) form.elements.fileApp.value = preferredApp;
+  if (!form.elements.fileWpPath.value) form.elements.fileWpPath.value = data.wpPath || "/var/www/html";
 }
 
 function exportConfig() {
@@ -380,6 +408,266 @@ async function api(path, options = {}) {
     throw new Error(payload.error || `HTTP ${response.status}`);
   }
   return payload;
+}
+
+function fileManagerConfig() {
+  const data = formData();
+  const profile = form.elements.fileProfile.value || "target";
+  const useSourceSsh = profile === "source" || data.sameSsh;
+  const app = form.elements.fileApp.value.trim() || (profile === "source" ? data.sourceApp : data.targetApp);
+  const ssh = useSourceSsh
+    ? {
+        host: data.sourceSshHost,
+        user: data.sourceSshUser || "root",
+        port: Number(data.sourceSshPort || 22),
+        keyPath: data.sourceSshKey || "",
+        privateKey: data.sourceSshPrivateKey || "",
+      }
+    : {
+        host: data.targetSshHost,
+        user: data.targetSshUser || "root",
+        port: Number(data.targetSshPort || 22),
+        keyPath: data.targetSshKey || "",
+        privateKey: data.targetSshPrivateKey || "",
+      };
+  return {
+    app,
+    wpPath: form.elements.fileWpPath.value.trim() || data.wpPath || "/var/www/html",
+    ssh,
+  };
+}
+
+function currentFilePath() {
+  return form.elements.filePath.value.trim() || ".";
+}
+
+function fileFullPath(file) {
+  const current = currentFilePath();
+  return current === "." ? file.name : `${current.replace(/\/+$/g, "")}/${file.name}`;
+}
+
+function fileApi(path, payload = {}) {
+  return api(path, {
+    method: "POST",
+    body: JSON.stringify({ config: fileManagerConfig(), ...payload }),
+  });
+}
+
+function setFileProgress(percent, phase, detail = "") {
+  const safePercent = Math.max(0, Math.min(100, Math.round(percent)));
+  fileProgressBar.style.width = `${safePercent}%`;
+  fileProgressValue.textContent = `${safePercent}%`;
+  fileProgressPhase.textContent = phase;
+  fileProgressDetail.textContent = detail;
+}
+
+function formatBytes(value) {
+  const bytes = Number(value || 0);
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let size = bytes / 1024;
+  let unit = units.shift();
+  while (size >= 1024 && units.length) {
+    size /= 1024;
+    unit = units.shift();
+  }
+  return `${size.toFixed(size >= 100 ? 0 : 1)} ${unit}`;
+}
+
+function formatUnixTime(value) {
+  const seconds = Number(value || 0);
+  if (!seconds) return "-";
+  return new Date(seconds * 1000).toLocaleString("pt-BR");
+}
+
+function renderFileList(files = []) {
+  selectedFile = null;
+  selectedFileName.textContent = "nenhum arquivo";
+  if (!files.length) {
+    fileList.innerHTML = `<tr><td colspan="6">Pasta vazia.</td></tr>`;
+    return;
+  }
+  fileList.innerHTML = files
+    .map(
+      (file) => `
+        <tr data-name="${escapeHtml(file.name)}" data-type="${escapeHtml(file.type)}">
+          <td>${file.type === "directory" ? "▸ " : ""}${escapeHtml(file.name)}</td>
+          <td>${escapeHtml(file.type)}</td>
+          <td>${file.type === "directory" ? "-" : formatBytes(file.size)}</td>
+          <td>${escapeHtml(file.owner || "-")}:${escapeHtml(file.group || "-")}</td>
+          <td>${escapeHtml(file.mode || "-")}</td>
+          <td>${formatUnixTime(file.mtime)}</td>
+        </tr>
+      `
+    )
+    .join("");
+  fileList.querySelectorAll("tr[data-name]").forEach((row) => {
+    const file = files.find((item) => item.name === row.dataset.name);
+    row.addEventListener("click", () => {
+      selectedFile = file;
+      selectedFileName.textContent = file ? `${file.type}: ${file.name}` : "nenhum arquivo";
+      fileList.querySelectorAll("tr").forEach((item) => item.classList.remove("is-selected"));
+      row.classList.add("is-selected");
+    });
+    row.addEventListener("dblclick", () => {
+      if (file?.type === "directory") {
+        form.elements.filePath.value = fileFullPath(file);
+        loadFileList();
+      }
+    });
+  });
+}
+
+async function loadFileList() {
+  try {
+    syncFileDefaults();
+    setFileProgress(8, "Listando", "Consultando container WordPress");
+    const payload = await fileApi("/api/files/list", { path: currentFilePath() });
+    form.elements.filePath.value = payload.path || ".";
+    renderFileList(payload.files || []);
+    setFileProgress(100, "Pronto", `${payload.files.length} item(ns) em ${payload.path}`);
+    appendLog(`arquivos listados em ${payload.app}:${payload.path}`);
+  } catch (error) {
+    setFileProgress(0, "Falhou", error.message);
+    appendLog(`falha ao listar arquivos: ${error.message}`);
+  }
+}
+
+async function createFolder() {
+  const name = form.elements.newFolderName.value.trim();
+  if (!name) {
+    appendLog("informe o nome da nova pasta");
+    return;
+  }
+  try {
+    setFileProgress(20, "Criando", `Criando pasta ${name}`);
+    await fileApi("/api/files/mkdir", { path: currentFilePath(), name });
+    form.elements.newFolderName.value = "";
+    await loadFileList();
+    appendLog(`pasta criada: ${name}`);
+  } catch (error) {
+    setFileProgress(0, "Falhou", error.message);
+    appendLog(`falha ao criar pasta: ${error.message}`);
+  }
+}
+
+async function uploadSelectedFile() {
+  const file = form.elements.fileUpload.files?.[0];
+  if (!file) {
+    appendLog("selecione um arquivo para upload");
+    return;
+  }
+  try {
+    setFileProgress(3, "Preparando", `Abrindo sessao para ${file.name}`);
+    const session = await fileApi("/api/files/upload-session", {
+      path: currentFilePath(),
+      fileName: file.name,
+      overwrite: form.elements.fileOverwrite.checked,
+    });
+    await new Promise((resolvePromise, rejectPromise) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", `/api/files/upload/${session.id}`);
+      xhr.upload.onprogress = (event) => {
+        if (event.lengthComputable) {
+          setFileProgress((event.loaded / event.total) * 72, "Enviando", `${formatBytes(event.loaded)} de ${formatBytes(event.total)}`);
+        } else {
+          setFileProgress(36, "Enviando", `Enviando ${file.name}`);
+        }
+      };
+      xhr.onload = () => {
+        try {
+          const payload = JSON.parse(xhr.responseText || "{}");
+          if (xhr.status >= 200 && xhr.status < 300 && payload.ok !== false) {
+            resolvePromise(payload);
+          } else {
+            rejectPromise(new Error(payload.error || `HTTP ${xhr.status}`));
+          }
+        } catch (error) {
+          rejectPromise(error);
+        }
+      };
+      xhr.onerror = () => rejectPromise(new Error("Falha de rede durante upload."));
+      xhr.send(file);
+    });
+    setFileProgress(92, "Publicando", "Arquivo recebido; atualizando volume");
+    form.elements.fileUpload.value = "";
+    await loadFileList();
+    appendLog(`upload concluido: ${file.name}`);
+  } catch (error) {
+    setFileProgress(0, "Falhou", error.message);
+    appendLog(`falha no upload: ${error.message}`);
+  }
+}
+
+async function previewSelectedFile() {
+  if (!selectedFile || selectedFile.type !== "file") {
+    appendLog("selecione um arquivo para visualizar");
+    return;
+  }
+  try {
+    const path = fileFullPath(selectedFile);
+    setFileProgress(20, "Preview", path);
+    const payload = await fileApi("/api/files/preview", { path });
+    filePreviewName.textContent = path;
+    filePreviewOutput.textContent = payload.content || "(arquivo vazio)";
+    setFileProgress(100, "Pronto", "Preview carregado");
+  } catch (error) {
+    setFileProgress(0, "Falhou", error.message);
+    filePreviewOutput.textContent = error.message;
+  }
+}
+
+async function zipSelectedFile() {
+  if (!selectedFile) {
+    appendLog("selecione arquivo ou pasta para compactar");
+    return;
+  }
+  const defaultName = `${selectedFile.name.replace(/\.zip$/i, "")}.zip`;
+  const archiveName = window.prompt("Nome do arquivo ZIP", defaultName);
+  if (!archiveName) return;
+  try {
+    setFileProgress(20, "Compactando", selectedFile.name);
+    const payload = await fileApi("/api/files/zip", {
+      path: fileFullPath(selectedFile),
+      archiveName,
+    });
+    await loadFileList();
+    appendLog(`zip criado: ${payload.archive}`);
+  } catch (error) {
+    setFileProgress(0, "Falhou", error.message);
+    appendLog(`falha ao compactar: ${error.message}`);
+  }
+}
+
+async function unzipSelectedFile() {
+  if (!selectedFile || selectedFile.type !== "file" || !selectedFile.name.toLowerCase().endsWith(".zip")) {
+    appendLog("selecione um arquivo .zip para descompactar");
+    return;
+  }
+  const destinationPath = window.prompt("Descompactar em qual pasta?", currentFilePath());
+  if (!destinationPath) return;
+  try {
+    setFileProgress(20, "Descompactando", selectedFile.name);
+    await fileApi("/api/files/unzip", {
+      path: fileFullPath(selectedFile),
+      destinationPath,
+      overwrite: form.elements.fileOverwrite.checked,
+    });
+    await loadFileList();
+    appendLog(`zip descompactado: ${selectedFile.name}`);
+  } catch (error) {
+    setFileProgress(0, "Falhou", error.message);
+    appendLog(`falha ao descompactar: ${error.message}`);
+  }
+}
+
+function goParentFolder() {
+  const current = currentFilePath();
+  if (current === ".") return;
+  const parts = current.split("/").filter(Boolean);
+  parts.pop();
+  form.elements.filePath.value = parts.length ? parts.join("/") : ".";
+  loadFileList();
 }
 
 async function loadHealth() {
@@ -631,6 +919,17 @@ dryRunButton.addEventListener("click", () => {
 });
 simulateButton.addEventListener("click", simulateRun);
 executeButton.addEventListener("click", executeJob);
+fileRefreshButton.addEventListener("click", loadFileList);
+fileParentButton.addEventListener("click", goParentFolder);
+fileMkdirButton.addEventListener("click", createFolder);
+fileUploadButton.addEventListener("click", uploadSelectedFile);
+filePreviewButton.addEventListener("click", previewSelectedFile);
+fileZipButton.addEventListener("click", zipSelectedFile);
+fileUnzipButton.addEventListener("click", unzipSelectedFile);
+form.elements.fileProfile.addEventListener("change", () => {
+  form.elements.fileApp.value = "";
+  syncFileDefaults();
+});
 form.elements.targetApp.addEventListener("blur", () => {
   const normalized = normalizeCapRoverName(form.elements.targetApp.value);
   if (normalized && normalized !== form.elements.targetApp.value) {

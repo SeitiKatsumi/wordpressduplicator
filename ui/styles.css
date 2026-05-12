@@ -54,6 +54,7 @@ body::before {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -302,6 +303,7 @@ h2 {
 }
 
 .field input,
+.field select,
 .field textarea {
   width: 100%;
   padding: 0 14px;
@@ -312,7 +314,8 @@ h2 {
   background: rgba(3, 5, 4, 0.76);
 }
 
-.field input {
+.field input,
+.field select {
   min-height: 48px;
 }
 
@@ -323,6 +326,7 @@ h2 {
 }
 
 .field input:focus,
+.field select:focus,
 .field textarea:focus {
   border-color: var(--radar);
   box-shadow: 0 0 0 3px rgba(166, 255, 77, 0.12);
@@ -640,6 +644,167 @@ input[type="checkbox"] {
   font-weight: 850;
 }
 
+.file-manager {
+  display: grid;
+  gap: 16px;
+}
+
+.file-toolbar {
+  display: grid;
+  grid-template-columns: 180px repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.file-actions,
+.file-upload,
+.file-selected {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.file-actions--split {
+  align-items: end;
+}
+
+.field--inline {
+  min-width: min(100%, 420px);
+}
+
+.file-upload {
+  padding: 14px;
+  border: 1px solid rgba(147, 161, 152, 0.16);
+  background: rgba(166, 255, 77, 0.04);
+}
+
+.file-upload .field {
+  flex: 1 1 360px;
+}
+
+.file-progress,
+.file-selected,
+.file-preview {
+  border: 1px solid rgba(147, 161, 152, 0.18);
+  background: rgba(3, 5, 4, 0.7);
+}
+
+.file-progress {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.file-progress header,
+.file-preview header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--steel);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.file-progress header strong,
+.file-preview header strong {
+  color: var(--amber);
+  overflow-wrap: anywhere;
+}
+
+.file-progress p {
+  margin: 0;
+  color: var(--steel);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.file-selected {
+  justify-content: space-between;
+  min-height: 58px;
+  padding: 12px;
+}
+
+.file-selected span {
+  color: var(--steel);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.file-selected strong {
+  color: var(--radar);
+  overflow-wrap: anywhere;
+}
+
+.file-browser {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid rgba(147, 161, 152, 0.18);
+  background: rgba(3, 5, 4, 0.62);
+}
+
+.file-browser table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 720px;
+}
+
+.file-browser th,
+.file-browser td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(147, 161, 152, 0.12);
+  color: var(--steel);
+  font-size: 12px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.file-browser th {
+  position: sticky;
+  top: 0;
+  color: var(--amber);
+  background: rgba(6, 10, 7, 0.96);
+  text-transform: uppercase;
+}
+
+.file-browser tr {
+  cursor: pointer;
+}
+
+.file-browser tr:hover,
+.file-browser tr.is-selected {
+  background: rgba(166, 255, 77, 0.08);
+}
+
+.file-browser td:first-child {
+  color: var(--text);
+  font-weight: 780;
+  overflow-wrap: anywhere;
+}
+
+.file-preview {
+  display: grid;
+}
+
+.file-preview header {
+  min-height: 42px;
+  padding: 12px;
+  border-bottom: 1px solid rgba(147, 161, 152, 0.18);
+}
+
+.file-preview pre {
+  min-height: 180px;
+  max-height: 300px;
+  margin: 0;
+  overflow: auto;
+  padding: 14px;
+  color: var(--radar);
+  font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 1040px) {
   .shell {
     grid-template-columns: 1fr;
@@ -651,7 +816,7 @@ input[type="checkbox"] {
   }
 
   .steps {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 
   .step {
@@ -683,7 +848,8 @@ input[type="checkbox"] {
 
   .steps,
   .field-grid,
-  .discovery {
+  .discovery,
+  .file-toolbar {
     grid-template-columns: 1fr;
   }
 
