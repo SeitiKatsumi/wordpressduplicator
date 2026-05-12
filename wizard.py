@@ -104,6 +104,8 @@ class TargetDiscovery:
     target_container: str = ""
     mysql_container: str = ""
     target_db_host: str = ""
+    target_app_preexisting: bool = False
+    mysql_app_preexisting: bool = False
 
 
 @dataclass
@@ -512,11 +514,43 @@ def docker_service_update_image(target: SshTarget, service: str, image: str) -> 
     ssh(target, f"docker service update --with-registry-auth --image {shlex.quote(image)} {shlex.quote(service)}")
 
 
+def docker_service_image(target: SshTarget, service: str) -> str:
+    return ssh_text(
+        target,
+        f"docker service inspect {shlex.quote(service)} --format '{{{{.Spec.TaskTemplate.ContainerSpec.Image}}}}'",
+    )
+
+
+def docker_service_env(target: SshTarget, service: str) -> dict[str, str]:
+    raw = ssh_text(
+        target,
+        f"docker service inspect {shlex.quote(service)} --format '{{{{json .Spec.TaskTemplate.ContainerSpec.Env}}}}'",
+    )
+    if not raw or raw == "null":
+        return {}
+    try:
+        env_list = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    result: dict[str, str] = {}
+    for item in env_list:
+        if not isinstance(item, str) or "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        result[key] = value
+    return result
+
+
+def is_placeholder_image(image: str) -> bool:
+    return "caprover-placeholder" in image or not image
+
+
 def create_target_app() -> None:
     cfg = STATE.config
     assert cfg
     target_service = captain_service(cfg.target_app)
     existing = ssh_text(cfg.target_ssh, f"docker service ls --format '{{{{.Name}}}}' | grep -x {shlex.quote(target_service)} || true")
+    STATE.target.target_app_preexisting = bool(existing)
     if existing and not cfg.allow_existing_target:
         raise RuntimeError("A app destino ja existe. Reexecute permitindo reutilizacao se for intencional.")
     if not existing:
@@ -530,9 +564,11 @@ def create_target_app() -> None:
 def create_target_mysql_app() -> None:
     cfg = STATE.config
     assert cfg
-    generate_db_names()
+    if not cfg.target_mysql_app:
+        cfg.target_mysql_app = f"{cfg.target_app}-db"
     target_service = captain_service(cfg.target_mysql_app)
     existing = ssh_text(cfg.target_ssh, f"docker service ls --format '{{{{.Name}}}}' | grep -x {shlex.quote(target_service)} || true")
+    STATE.target.mysql_app_preexisting = bool(existing)
     if existing and not cfg.allow_existing_target:
         raise RuntimeError("A app MySQL destino ja existe. Reexecute permitindo reutilizacao se for intencional.")
     if not existing:
@@ -541,6 +577,19 @@ def create_target_mysql_app() -> None:
     else:
         log(f"App MySQL destino ja existe e sera reutilizada: {cfg.target_mysql_app}")
 
+    if existing and cfg.allow_existing_target and not is_placeholder_image(docker_service_image(cfg.target_ssh, target_service)):
+        hydrate_existing_mysql_config(target_service)
+        log("App MySQL existente preservada; pulando deploy/configuracao de servico")
+        STATE.target.mysql_container = wait_container_probe(
+            cfg.target_ssh,
+            target_service,
+            "command -v mysqladmin >/dev/null 2>&1 || test -x /usr/bin/mysqladmin",
+            timeout=240,
+        )
+        wait_mysql_ready()
+        return
+
+    generate_db_names()
     ensure_mysql_service_config()
     docker_service_update_image(cfg.target_ssh, target_service, cfg.target_mysql_image)
     STATE.target.mysql_container = wait_container_probe(
@@ -559,6 +608,26 @@ def ensure_mysql_service_config() -> None:
     service = captain_service(cfg.target_mysql_app)
     docker_service_set_env(cfg.target_ssh, service, {"MYSQL_ROOT_PASSWORD": cfg.target_mysql_root_password})
     docker_service_ensure_volume_mount(cfg.target_ssh, service, volume, "/var/lib/mysql")
+
+
+def hydrate_existing_mysql_config(service: str) -> None:
+    cfg = STATE.config
+    assert cfg
+    env = docker_service_env(cfg.target_ssh, service)
+    if not cfg.target_mysql_root_password and env.get("MYSQL_ROOT_PASSWORD"):
+        cfg.target_mysql_root_password = env["MYSQL_ROOT_PASSWORD"]
+    if not cfg.target_db_name and env.get("MYSQL_DATABASE"):
+        cfg.target_db_name = env["MYSQL_DATABASE"]
+    if not cfg.target_db_user and env.get("MYSQL_USER"):
+        cfg.target_db_user = env["MYSQL_USER"]
+    if not cfg.target_db_password and env.get("MYSQL_PASSWORD"):
+        cfg.target_db_password = env["MYSQL_PASSWORD"]
+    generate_db_names()
+    if not cfg.target_mysql_root_password:
+        raise RuntimeError(
+            "Senha root MySQL destino ausente. Em modo apps existentes, preencha Senha root destino "
+            "ou configure MYSQL_ROOT_PASSWORD na app MySQL destino."
+        )
 
 
 def ensure_wordpress_volume_config() -> None:
@@ -594,6 +663,11 @@ def wait_mysql_ready(timeout: int = 240) -> None:
 def deploy_target_image() -> None:
     cfg = STATE.config
     assert cfg
+    current_image = docker_service_image(cfg.target_ssh, STATE.target.target_service)
+    if cfg.allow_existing_target and not is_placeholder_image(current_image):
+        log("App WordPress existente preservada; pulando deploy/configuracao de servico")
+        STATE.target.target_container = wait_target_wordpress_container(timeout=240)
+        return
     ensure_wordpress_volume_config()
     docker_service_update_image(cfg.target_ssh, STATE.target.target_service, STATE.source.source_image)
     STATE.target.target_container = wait_target_wordpress_container(timeout=240)
@@ -766,7 +840,8 @@ def generate_db_names() -> None:
     assert cfg
     if not cfg.target_mysql_app:
         cfg.target_mysql_app = f"{cfg.target_app}-db"
-    if not cfg.target_mysql_root_password:
+    existing_mysql_mode = cfg.allow_existing_target and STATE.target.mysql_app_preexisting
+    if not cfg.target_mysql_root_password and not existing_mysql_mode:
         cfg.target_mysql_root_password = secrets.token_urlsafe(24)
     if not cfg.target_db_name:
         cfg.target_db_name = STATE.source.db_name or "wordpress"
