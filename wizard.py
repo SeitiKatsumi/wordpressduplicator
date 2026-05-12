@@ -469,6 +469,49 @@ def caprover_update_app_config(
     caprover_api(cap, "/user/apps/appDefinitions/update", payload)
 
 
+def docker_service_set_env(target: SshTarget, service: str, env_vars: dict[str, str]) -> None:
+    if not env_vars:
+        return
+    for value in env_vars.values():
+        remember_secret(value)
+    args = " ".join(
+        f"--env-add {shlex.quote(key + '=' + value)}"
+        for key, value in env_vars.items()
+    )
+    ssh(target, f"docker service update {args} {shlex.quote(service)}")
+
+
+def docker_service_mount_targets(target: SshTarget, service: str) -> set[str]:
+    raw = ssh_text(
+        target,
+        f"docker service inspect {shlex.quote(service)} --format '{{{{json .Spec.TaskTemplate.ContainerSpec.Mounts}}}}'",
+    )
+    if not raw or raw == "null":
+        return set()
+    try:
+        mounts = json.loads(raw)
+    except json.JSONDecodeError:
+        return set()
+    return {str(mount.get("Target", "")) for mount in mounts if mount.get("Target")}
+
+
+def docker_service_ensure_volume_mount(target: SshTarget, service: str, volume: str, container_path: str) -> None:
+    targets = docker_service_mount_targets(target, service)
+    if container_path in targets:
+        return
+    ssh(target, f"docker volume create {shlex.quote(volume)} >/dev/null")
+    ssh(
+        target,
+        "docker service update "
+        f"--mount-add {shlex.quote('type=volume,source=' + volume + ',target=' + container_path)} "
+        f"{shlex.quote(service)}",
+    )
+
+
+def docker_service_update_image(target: SshTarget, service: str, image: str) -> None:
+    ssh(target, f"docker service update --with-registry-auth --image {shlex.quote(image)} {shlex.quote(service)}")
+
+
 def create_target_app() -> None:
     cfg = STATE.config
     assert cfg
@@ -499,35 +542,32 @@ def create_target_mysql_app() -> None:
         log(f"App MySQL destino ja existe e sera reutilizada: {cfg.target_mysql_app}")
 
     ensure_mysql_service_config()
-    caprover_deploy_image(cfg.target_caprover, cfg.target_mysql_app, cfg.target_mysql_image)
-    STATE.target.mysql_container = wait_container_exec(cfg.target_ssh, target_service, timeout=240)
+    docker_service_update_image(cfg.target_ssh, target_service, cfg.target_mysql_image)
+    STATE.target.mysql_container = wait_container_probe(
+        cfg.target_ssh,
+        target_service,
+        "command -v mysqladmin >/dev/null 2>&1 || test -x /usr/bin/mysqladmin",
+        timeout=240,
+    )
     wait_mysql_ready()
 
 
 def ensure_mysql_service_config() -> None:
     cfg = STATE.config
     assert cfg
-    volume = f"wpclone-{cfg.target_mysql_app}-mysql-data"
-    caprover_update_app_config(
-        cfg.target_caprover,
-        cfg.target_mysql_app,
-        env_vars={"MYSQL_ROOT_PASSWORD": cfg.target_mysql_root_password},
-        volumes=[(volume, "/var/lib/mysql")],
-        not_expose_as_web_app=True,
-    )
+    volume = f"wpclone-{cfg.target_mysql_app}-{secrets.token_hex(4)}-mysql-data"
+    service = captain_service(cfg.target_mysql_app)
+    docker_service_set_env(cfg.target_ssh, service, {"MYSQL_ROOT_PASSWORD": cfg.target_mysql_root_password})
+    docker_service_ensure_volume_mount(cfg.target_ssh, service, volume, "/var/lib/mysql")
 
 
 def ensure_wordpress_volume_config() -> None:
     cfg = STATE.config
     assert cfg
-    volume = f"wpclone-{cfg.target_app}-wp-data"
-    caprover_update_app_config(
-        cfg.target_caprover,
-        cfg.target_app,
-        env_vars=wordpress_env_vars(),
-        volumes=[(volume, cfg.wp_path)],
-        not_expose_as_web_app=False,
-    )
+    volume = f"wpclone-{cfg.target_app}-{secrets.token_hex(4)}-wp-data"
+    service = captain_service(cfg.target_app)
+    docker_service_set_env(cfg.target_ssh, service, wordpress_env_vars())
+    docker_service_ensure_volume_mount(cfg.target_ssh, service, volume, cfg.wp_path)
 
 
 def wait_mysql_ready(timeout: int = 240) -> None:
@@ -535,11 +575,11 @@ def wait_mysql_ready(timeout: int = 240) -> None:
     assert cfg
     service = captain_service(cfg.target_mysql_app)
     for _ in range(max(1, timeout // 4)):
-        container = ssh_text(
+        raw = ssh_text(
             cfg.target_ssh,
-            f"docker ps --filter {shlex.quote('label=com.docker.swarm.service.name=' + service)} --format '{{{{.ID}}}}' | head -n 1",
+            f"docker ps --filter {shlex.quote('label=com.docker.swarm.service.name=' + service)} --format '{{{{.ID}}}}'",
         )
-        if container:
+        for container in [line.strip() for line in raw.splitlines() if line.strip()]:
             STATE.target.mysql_container = container
             ok = ssh_text(
                 cfg.target_ssh,
@@ -555,8 +595,8 @@ def deploy_target_image() -> None:
     cfg = STATE.config
     assert cfg
     ensure_wordpress_volume_config()
-    caprover_deploy_image(cfg.target_caprover, cfg.target_app, STATE.source.source_image)
-    STATE.target.target_container = wait_container_exec(cfg.target_ssh, STATE.target.target_service, timeout=240)
+    docker_service_update_image(cfg.target_ssh, STATE.target.target_service, STATE.source.source_image)
+    STATE.target.target_container = wait_target_wordpress_container(timeout=240)
 
 
 def wordpress_env_vars() -> dict[str, str]:
@@ -598,9 +638,80 @@ def wait_container_exec(target: SshTarget, service: str, container: str = "", ti
     raise RuntimeError(f"Container nao aceitou docker exec para service {service}")
 
 
+def wait_container_probe(target: SshTarget, service: str, probe: str, timeout: int = 180) -> str:
+    check = f"({probe}) >/dev/null 2>&1 && echo yes || true"
+    for _ in range(max(1, timeout // 3)):
+        raw = ssh_text(
+            target,
+            f"docker ps --filter {shlex.quote('label=com.docker.swarm.service.name=' + service)} --format '{{{{.ID}}}}'",
+        )
+        for container in [line.strip() for line in raw.splitlines() if line.strip()]:
+            ok = ssh_text(target, f"docker exec {container} sh -lc {shlex.quote(check)}")
+            if ok == "yes":
+                return container
+        time.sleep(3)
+    raise RuntimeError(f"Container nao ficou pronto para service {service}")
+
+
+def wait_target_wordpress_container(timeout: int = 180) -> str:
+    cfg = STATE.config
+    assert cfg
+    probe = (
+        f"test -d {shlex.quote(cfg.wp_path)} "
+        f"|| test -d /usr/src/wordpress "
+        f"|| test -f {shlex.quote(cfg.wp_path)}/index.php"
+    )
+    return wait_container_probe(cfg.target_ssh, STATE.target.target_service, probe, timeout=timeout)
+
+
 def copy_files() -> None:
     cfg = STATE.config
     assert cfg
+    if same_ssh_target(cfg.source_ssh, cfg.target_ssh):
+        run_suffix = secrets.token_hex(4)
+        tmp_tar = f"/tmp/wpclone-{cfg.source_app[:16]}-{cfg.target_app[:16]}-{run_suffix}.tgz"
+        tmp_dir = f"/tmp/wpclone-{cfg.source_app[:16]}-{cfg.target_app[:16]}-{run_suffix}-files"
+        clean_target = f"find {shlex.quote(cfg.wp_path)} -mindepth 1 -maxdepth 1 -exec rm -rf {{}} +"
+        remote_script = (
+            "set -uo pipefail; "
+            "wait_service_container(){ service=\"$1\"; limit=\"$2\"; probe=\"$3\"; i=0; "
+            "while [ \"$i\" -lt \"$limit\" ]; do "
+            "for cid in $(docker ps --filter \"label=com.docker.swarm.service.name=$service\" --format '{{.ID}}'); do "
+            "if docker exec \"$cid\" sh -lc \"$probe\" >/dev/null 2>&1; then echo \"$cid\"; return 0; fi; "
+            "done; "
+            "i=$((i+3)); sleep 3; "
+            "done; return 1; }; "
+            f"src=$(wait_service_container {shlex.quote(STATE.source.source_service)} 60 {shlex.quote(f'test -d {cfg.wp_path} && test -f {cfg.wp_path}/wp-config.php')}) || exit 40; "
+            f"dst=$(wait_service_container {shlex.quote(STATE.target.target_service)} 240 {shlex.quote(f'test -d /usr/src/wordpress || test -d {cfg.wp_path} || test -f {cfg.wp_path}/index.php')}) || exit 45; "
+            f"rm -f {shlex.quote(tmp_tar)}; "
+            f"rm -rf {shlex.quote(tmp_dir)}; "
+            f"docker exec \"$src\" sh -lc {shlex.quote(f'pwd; ls -la {cfg.wp_path}; test -f {cfg.wp_path}/wp-config.php')} || exit 41; "
+            f"echo 'transferencia arquivos: preparando volume WordPress'; "
+            "tar_rc=0; "
+            f"docker exec \"$src\" sh -lc {shlex.quote(f'tar --warning=no-file-changed --ignore-failed-read -C {cfg.wp_path} -czf - .')} > {shlex.quote(tmp_tar)} || tar_rc=$?; "
+            f"if test -s {shlex.quote(tmp_tar)}; then size_bytes=$(stat -c%s {shlex.quote(tmp_tar)} 2>/dev/null || wc -c < {shlex.quote(tmp_tar)}); echo \"transferencia arquivos: pacote WordPress ${{size_bytes}} bytes\"; fi; "
+            f"dst=$(wait_service_container {shlex.quote(STATE.target.target_service)} 240 {shlex.quote(f'mkdir -p {cfg.wp_path} && test -d {cfg.wp_path}')}) || exit 45; "
+            f"docker exec \"$dst\" sh -lc {shlex.quote(f'mkdir -p {cfg.wp_path}; test -d {cfg.wp_path}')} || exit 45; "
+            "extract_rc=0; "
+            f"if [ \"$tar_rc\" -le 1 ] && test -s {shlex.quote(tmp_tar)}; then "
+            f"docker exec \"$dst\" sh -lc {shlex.quote(clean_target)} || exit 46; "
+            f"cat {shlex.quote(tmp_tar)} | docker exec -i \"$dst\" tar -C {shlex.quote(cfg.wp_path)} -xzf - || extract_rc=$?; "
+            "if [ \"$extract_rc\" -eq 0 ]; then echo 'transferencia arquivos: extracao no destino concluida'; fi; "
+            "else extract_rc=91; fi; "
+            "if [ \"$extract_rc\" -ne 0 ]; then "
+            "echo \"tar falhou; tentando fallback docker cp (tar_rc=$tar_rc extract_rc=$extract_rc)\" >&2; "
+            f"rm -rf {shlex.quote(tmp_dir)}; mkdir -p {shlex.quote(tmp_dir)} || exit 92; "
+            f"docker cp \"$src\":{shlex.quote(cfg.wp_path)}/. {shlex.quote(tmp_dir)}/ || exit 93; "
+            f"dst=$(wait_service_container {shlex.quote(STATE.target.target_service)} 240 {shlex.quote(f'mkdir -p {cfg.wp_path} && test -d {cfg.wp_path}')}) || exit 45; "
+            f"docker exec \"$dst\" sh -lc {shlex.quote(clean_target)} || exit 94; "
+            f"docker cp {shlex.quote(tmp_dir)}/. \"$dst\":{shlex.quote(cfg.wp_path)}/ || exit 95; "
+            "fi; "
+            f"rm -f {shlex.quote(tmp_tar)}; rm -rf {shlex.quote(tmp_dir)}"
+        )
+        log("+ copiar arquivos WordPress no mesmo host via tar temporario")
+        ssh(cfg.source_ssh, remote_script)
+        return
+
     STATE.source.source_container = wait_container_exec(
         cfg.source_ssh,
         STATE.source.source_service,
@@ -621,39 +732,6 @@ def copy_files() -> None:
         cfg.target_ssh,
         f"docker exec {STATE.target.target_container} sh -lc {shlex.quote(f'mkdir -p {cfg.wp_path}')}",
     )
-
-    if same_ssh_target(cfg.source_ssh, cfg.target_ssh):
-        tmp_tar = f"/tmp/wpclone-{STATE.source.source_container[:8]}-{STATE.target.target_container[:8]}.tgz"
-        tmp_dir = f"/tmp/wpclone-{STATE.source.source_container[:8]}-{STATE.target.target_container[:8]}-files"
-        clean_target = f"find {shlex.quote(cfg.wp_path)} -mindepth 1 -maxdepth 1 -exec rm -rf {{}} +"
-        remote_script = (
-            "set -uo pipefail; "
-            f"rm -f {shlex.quote(tmp_tar)}; "
-            f"rm -rf {shlex.quote(tmp_dir)}; "
-            f"docker exec {STATE.source.source_container} sh -lc {shlex.quote(f'pwd; ls -la {cfg.wp_path}; test -f {cfg.wp_path}/wp-config.php')} || exit 41; "
-            f"echo 'transferencia arquivos: preparando volume WordPress'; "
-            "tar_rc=0; "
-            f"docker exec {STATE.source.source_container} sh -lc {shlex.quote(f'tar --warning=no-file-changed --ignore-failed-read -C {cfg.wp_path} -czf - .')} > {shlex.quote(tmp_tar)} || tar_rc=$?; "
-            f"if test -s {shlex.quote(tmp_tar)}; then size_bytes=$(stat -c%s {shlex.quote(tmp_tar)} 2>/dev/null || wc -c < {shlex.quote(tmp_tar)}); echo \"transferencia arquivos: pacote WordPress ${{size_bytes}} bytes\"; fi; "
-            f"docker exec {STATE.target.target_container} sh -lc {shlex.quote(f'mkdir -p {cfg.wp_path}; test -d {cfg.wp_path}')} || exit 45; "
-            "extract_rc=0; "
-            f"if [ \"$tar_rc\" -le 1 ] && test -s {shlex.quote(tmp_tar)}; then "
-            f"docker exec {STATE.target.target_container} sh -lc {shlex.quote(clean_target)} || exit 46; "
-            f"cat {shlex.quote(tmp_tar)} | docker exec -i {STATE.target.target_container} tar -C {shlex.quote(cfg.wp_path)} -xzf - || extract_rc=$?; "
-            "if [ \"$extract_rc\" -eq 0 ]; then echo 'transferencia arquivos: extracao no destino concluida'; fi; "
-            "else extract_rc=91; fi; "
-            "if [ \"$extract_rc\" -ne 0 ]; then "
-            "echo \"tar falhou; tentando fallback docker cp (tar_rc=$tar_rc extract_rc=$extract_rc)\" >&2; "
-            f"rm -rf {shlex.quote(tmp_dir)}; mkdir -p {shlex.quote(tmp_dir)} || exit 92; "
-            f"docker cp {STATE.source.source_container}:{shlex.quote(cfg.wp_path)}/. {shlex.quote(tmp_dir)}/ || exit 93; "
-            f"docker exec {STATE.target.target_container} sh -lc {shlex.quote(clean_target)} || exit 94; "
-            f"docker cp {shlex.quote(tmp_dir)}/. {STATE.target.target_container}:{shlex.quote(cfg.wp_path)}/ || exit 95; "
-            "fi; "
-            f"rm -f {shlex.quote(tmp_tar)}; rm -rf {shlex.quote(tmp_dir)}"
-        )
-        log("+ copiar arquivos WordPress no mesmo host via tar temporario")
-        ssh(cfg.source_ssh, remote_script)
-        return
 
     src_cmd = cfg.source_ssh.base_cmd() + [
         f"docker exec {STATE.source.source_container} tar -C {shlex.quote(cfg.wp_path)} -czf - ."
@@ -806,6 +884,7 @@ def sql_escape(value: str) -> str:
 def update_target_wp_config() -> None:
     cfg = STATE.config
     assert cfg
+    STATE.target.target_container = wait_target_wordpress_container(timeout=120)
     values = {
         "DB_NAME": cfg.target_db_name,
         "DB_USER": cfg.target_db_user,
@@ -836,6 +915,7 @@ def php_string(value: str) -> str:
 def run_wp_search_replace() -> None:
     cfg = STATE.config
     assert cfg
+    STATE.target.target_container = wait_target_wordpress_container(timeout=120)
     wp_inside = (
         f"cd {shlex.quote(cfg.wp_path)} && "
         f"wp --allow-root search-replace {shlex.quote(cfg.old_url)} {shlex.quote(cfg.new_url)} --all-tables --precise --recurse-objects --skip-columns=guid && "
@@ -860,6 +940,7 @@ def run_wp_search_replace() -> None:
 def fix_permissions() -> None:
     cfg = STATE.config
     assert cfg
+    STATE.target.target_container = wait_target_wordpress_container(timeout=120)
     script = (
         f"uidgid=$(id -u www-data >/dev/null 2>&1 && echo www-data:www-data || echo $(id -u):$(id -g)); "
         f"chown -R \"$uidgid\" {shlex.quote(cfg.wp_path)}/wp-content || true; "
@@ -872,6 +953,7 @@ def fix_permissions() -> None:
 def validate_target() -> None:
     cfg = STATE.config
     assert cfg
+    STATE.target.target_container = wait_target_wordpress_container(timeout=120)
     ssh(cfg.target_ssh, f"docker exec {STATE.target.target_container} sh -lc {shlex.quote(f'test -f {cfg.wp_path}/wp-config.php && test -d {cfg.wp_path}/wp-content/plugins && test -d {cfg.wp_path}/wp-content/themes')}")
     validation_sql = f'SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA="{sql_escape(cfg.target_db_name)}";'
     count = ssh_text(
