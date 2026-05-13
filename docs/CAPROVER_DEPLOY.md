@@ -104,13 +104,15 @@ Se ainda assim decidir usar Docker socket, faca isso apenas em ambiente controla
 
 ## 5. Fluxo operacional recomendado
 
-1. Acesse a UI do WordPress Duplicator.
-2. Cadastre origem:
+1. No CapRover destino, crie uma app WordPress limpa para receber a copia.
+2. No CapRover destino, crie uma app MySQL limpa e exclusiva para esse clone.
+3. Acesse a UI do WP Clone.
+4. Cadastre origem:
    - CapRover origem;
    - SSH origem;
    - app WordPress origem;
    - URL antiga.
-3. Rode diagnostico:
+5. Rode diagnostico:
    - SSH;
    - Docker;
    - CapRover;
@@ -119,19 +121,20 @@ Se ainda assim decidir usar Docker socket, faca isso apenas em ambiente controla
    - DB host;
    - MySQL;
    - volume/path.
-4. Cadastre destino:
+6. Cadastre destino:
    - mesmo servidor ou outro;
    - mesmo CapRover ou outro;
-   - nome da nova app;
+   - nome da app WordPress destino ja criada;
    - nova URL.
-5. Configure banco:
+7. Configure banco:
    - senha root/admin do MySQL origem;
-   - nova app MySQL destino, por exemplo `cliente-wordpress-db`;
+   - app MySQL destino ja criada, por exemplo `cliente-wordpress-db`;
    - imagem MySQL destino, por exemplo `mysql:8.0`;
-   - nome do novo banco e usuario, ou deixe os padroes.
-6. Execute primeiro em dry-run.
-7. Execute em modo real.
-8. Adicione dominio e HTTPS manualmente no CapRover.
+   - nome do banco e usuario destino; esse banco sera substituido no destino.
+8. Deixe `Destino existente` marcado.
+9. Execute primeiro em dry-run.
+10. Desative dry-run e execute em modo real.
+11. Adicione dominio e HTTPS manualmente no CapRover.
 
 ## 6. Gerenciador de arquivos
 
@@ -198,7 +201,8 @@ Credenciais sensiveis devem ser criptografadas com `APP_SECRET_KEY` ou solicitad
 - O campo "Caminho da chave SSH" nao aceita senha; ele deve receber algo como `/data/ssh-keys/id_rsa`.
 - Para autenticar por chave colada, use o campo "Chave privada SSH completa" com o bloco `BEGIN/END PRIVATE KEY`.
 - Validar primeiro com dry-run.
-- Bloquear destino existente por padrao.
+- Usar `Destino existente` como fluxo principal em producao.
+- Usar apps destino limpas e exclusivas para cada cliente.
 - Nunca escrever no banco original.
 - Nunca alterar arquivos da app original.
 - Para clientes separados, use uma nova app MySQL destino para cada clone.

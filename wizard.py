@@ -551,6 +551,15 @@ def create_target_app() -> None:
     target_service = captain_service(cfg.target_app)
     existing = ssh_text(cfg.target_ssh, f"docker service ls --format '{{{{.Name}}}}' | grep -x {shlex.quote(target_service)} || true")
     STATE.target.target_app_preexisting = bool(existing)
+    if cfg.allow_existing_target:
+        if not existing:
+            raise RuntimeError(
+                "Modo destino existente ativo: crie primeiro a app WordPress destino no CapRover "
+                f"com o nome {cfg.target_app}."
+            )
+        log(f"App WordPress destino existente confirmada: {cfg.target_app}")
+        STATE.target.target_service = target_service
+        return
     if existing and not cfg.allow_existing_target:
         raise RuntimeError("A app destino ja existe. Reexecute permitindo reutilizacao se for intencional.")
     if not existing:
@@ -569,6 +578,28 @@ def create_target_mysql_app() -> None:
     target_service = captain_service(cfg.target_mysql_app)
     existing = ssh_text(cfg.target_ssh, f"docker service ls --format '{{{{.Name}}}}' | grep -x {shlex.quote(target_service)} || true")
     STATE.target.mysql_app_preexisting = bool(existing)
+    if cfg.allow_existing_target:
+        if not existing:
+            raise RuntimeError(
+                "Modo destino existente ativo: crie primeiro a app MySQL destino no CapRover "
+                f"com o nome {cfg.target_mysql_app}."
+            )
+        log(f"App MySQL destino existente confirmada: {cfg.target_mysql_app}")
+        hydrate_existing_mysql_config(target_service)
+        ensure_mysql_service_config()
+        current_image = docker_service_image(cfg.target_ssh, target_service)
+        if is_placeholder_image(current_image):
+            docker_service_update_image(cfg.target_ssh, target_service, cfg.target_mysql_image)
+        else:
+            ssh(cfg.target_ssh, f"docker service update --force {shlex.quote(target_service)}")
+        STATE.target.mysql_container = wait_container_probe(
+            cfg.target_ssh,
+            target_service,
+            "command -v mysqladmin >/dev/null 2>&1 || test -x /usr/bin/mysqladmin",
+            timeout=240,
+        )
+        wait_mysql_ready()
+        return
     if existing and not cfg.allow_existing_target:
         raise RuntimeError("A app MySQL destino ja existe. Reexecute permitindo reutilizacao se for intencional.")
     if not existing:
@@ -624,10 +655,9 @@ def hydrate_existing_mysql_config(service: str) -> None:
         cfg.target_db_password = env["MYSQL_PASSWORD"]
     generate_db_names()
     if not cfg.target_mysql_root_password:
-        raise RuntimeError(
-            "Senha root MySQL destino ausente. Em modo apps existentes, preencha Senha root destino "
-            "ou configure MYSQL_ROOT_PASSWORD na app MySQL destino."
-        )
+        cfg.target_mysql_root_password = secrets.token_urlsafe(24)
+        remember_secret(cfg.target_mysql_root_password)
+        log("Senha root MySQL destino ausente; gerada automaticamente para app destino limpa")
 
 
 def ensure_wordpress_volume_config() -> None:
@@ -664,8 +694,13 @@ def deploy_target_image() -> None:
     cfg = STATE.config
     assert cfg
     current_image = docker_service_image(cfg.target_ssh, STATE.target.target_service)
-    if cfg.allow_existing_target and not is_placeholder_image(current_image):
-        log("App WordPress existente preservada; pulando deploy/configuracao de servico")
+    if cfg.allow_existing_target:
+        log("Modo destino existente: configurando volume/env da app WordPress destino")
+        ensure_wordpress_volume_config()
+        if is_placeholder_image(current_image):
+            docker_service_update_image(cfg.target_ssh, STATE.target.target_service, STATE.source.source_image)
+        else:
+            ssh(cfg.target_ssh, f"docker service update --force {shlex.quote(STATE.target.target_service)}")
         STATE.target.target_container = wait_target_wordpress_container(timeout=240)
         return
     ensure_wordpress_volume_config()
@@ -884,7 +919,16 @@ def clone_database() -> None:
     wait_mysql_ready()
     exists_sql = f"SELECT SCHEMA_NAME FROM INFORMATION_SCHEMA.SCHEMATA WHERE SCHEMA_NAME='{sql_escape(cfg.target_db_name)}';"
     existing = mysql_query_text(cfg.target_ssh, STATE.target.mysql_container, cfg.target_mysql_root_user, cfg.target_mysql_root_password, exists_sql)
-    if existing and not cfg.allow_existing_target:
+    if existing and cfg.allow_existing_target:
+        log(f"Modo destino existente: banco {cfg.target_db_name} sera substituido no MySQL destino")
+        mysql_exec(
+            cfg.target_ssh,
+            STATE.target.mysql_container,
+            cfg.target_mysql_root_user,
+            cfg.target_mysql_root_password,
+            f"DROP DATABASE IF EXISTS `{cfg.target_db_name}`;",
+        )
+    elif existing and not cfg.allow_existing_target:
         count_sql = (
             "SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES "
             f"WHERE TABLE_SCHEMA='{sql_escape(cfg.target_db_name)}';"

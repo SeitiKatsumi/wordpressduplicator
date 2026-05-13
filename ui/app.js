@@ -45,8 +45,13 @@ let selectedFile = null;
 const transferStages = [
   ["preflight", 8, "Validando SSH e Docker"],
   ["descobrir app wordpress origem", 16, "Lendo WordPress de origem"],
+  ["app wordpress destino existente confirmada", 24, "Destino WordPress confirmado"],
+  ["confirmar app wordpress destino", 24, "Destino WordPress confirmado"],
   ["criar app caprover destino", 25, "Criando app WordPress destino"],
+  ["app mysql destino existente confirmada", 34, "Destino MySQL confirmado"],
+  ["confirmar app mysql destino", 34, "Destino MySQL confirmado"],
   ["criar app mysql destino", 38, "Criando app MySQL destino"],
+  ["configurando volume/env", 44, "Preparando app destino"],
   ["pulling this image: mysql", 50, "Baixando imagem MySQL"],
   ["deploying wordpress", 58, "Fazendo deploy da imagem WordPress"],
   ["copiar arquivos", 66, "Transferindo arquivos WordPress"],
@@ -253,7 +258,7 @@ function fillFormFromConfig(config) {
   set("filePath", ".");
 
   setChecked("dryRun", execution.dryRun !== false);
-  setChecked("allowExistingTarget", execution.allowExistingTarget);
+  setChecked("allowExistingTarget", execution.allowExistingTarget !== false);
 
   refreshPreview();
   setStep(0);
@@ -375,7 +380,7 @@ function refreshPreview() {
     : "srv-captain--nova-app-db";
   document.querySelector("#volumePreview").textContent = data.wpPath || "/var/www/html";
   telemetryMode.textContent = data.dryRun ? "DRY" : "LIVE";
-  telemetryRisk.textContent = data.allowExistingTarget ? "MÉDIO" : "BAIXO";
+  telemetryRisk.textContent = data.allowExistingTarget ? "CONTROLADO" : "ALTO";
   syncFileDefaults(data);
 }
 

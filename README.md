@@ -1,11 +1,18 @@
 # WordPress Duplicator
 
-Wizard para duplicar uma instalacao WordPress hospedada no CapRover, criando automaticamente:
+Wizard para duplicar uma instalacao WordPress hospedada no CapRover.
 
-- nova app no CapRover destino;
-- nova app MySQL no CapRover destino, separada da origem;
+Fluxo recomendado para producao: crie antes uma app WordPress limpa e uma app
+MySQL limpa no CapRover destino. O WP Clone usa essas apps como destino, copia
+os arquivos da origem, recria apenas o banco destino, atualiza `wp-config.php`,
+troca a URL e valida o resultado. A origem nao e alterada.
+
+O modulo executa:
+
+- confirmacao ou criacao da app WordPress destino;
+- confirmacao ou criacao da app MySQL destino, separada da origem;
 - copia completa dos arquivos do WordPress;
-- novo banco MySQL baseado no banco da origem dentro da nova app MySQL;
+- novo banco MySQL baseado no banco da origem dentro da app MySQL destino;
 - novo usuario/senha do banco;
 - `wp-config.php` apontando para o banco novo;
 - troca da URL antiga pela nova com suporte a dados serializados via WP-CLI;
@@ -128,11 +135,11 @@ O wizard pergunta:
 4. URL atual do site.
 5. SSH do destino, que pode ser o mesmo.
 6. CapRover do destino, que pode ser o mesmo.
-7. nome da nova app.
+7. nome da app WordPress destino ja criada.
 8. nova URL que sera gravada no banco.
 9. credenciais admin/root do MySQL.
-10. nome da nova app MySQL destino.
-11. nome do banco/usuario destino, ou deixa gerar automaticamente.
+10. nome da app MySQL destino ja criada.
+11. nome do banco/usuario destino; em destino existente, esse banco sera substituido.
 
 ## Fluxo executado
 
@@ -141,14 +148,14 @@ O wizard pergunta:
 3. Le `wp-config.php` da origem.
 4. Descobre banco, usuario, senha, host e prefixo de tabelas.
 5. Localiza container MySQL da origem.
-6. Cria nova app no CapRover destino.
-7. Faz deploy da mesma imagem Docker usada pela origem.
-8. Aguarda container destino subir.
-9. Copia arquivos do WordPress por `tar` via SSH.
-10. Cria uma nova app MySQL destino no CapRover.
-11. Faz deploy da imagem MySQL configurada com novo banco, usuario e senha.
-12. Faz `mysqldump` da origem e restore no banco novo.
-13. Atualiza `wp-config.php` da copia para `srv-captain--nova-app-db:3306`.
+6. Confirma a app WordPress destino.
+7. Confirma a app MySQL destino.
+8. Configura volume/env do destino quando necessario.
+9. Aguarda containers destino ficarem prontos.
+10. Copia arquivos do WordPress por `tar` via SSH.
+11. Recria o banco informado apenas no MySQL destino.
+12. Faz `mysqldump` da origem e restore no banco destino.
+13. Atualiza `wp-config.php` da copia para `srv-captain--app-db:3306`.
 14. Executa `wp search-replace` da URL antiga para a nova.
 15. Atualiza `home` e `siteurl`.
 16. Corrige permissoes.
@@ -164,7 +171,7 @@ O wizard pergunta:
 - Senhas sao mascaradas nos logs.
 - O estado fica salvo em `.wordpress-duplicator-state/wizard-state.json`.
 - Se uma etapa falhar, corrija o problema e rode o wizard novamente para retomar.
-- Por padrao, o wizard bloqueia app/banco destino ja existentes.
+- Por padrao, a UI usa destino existente e sobrescreve somente as apps destino informadas.
 
 ## Observacoes importantes
 

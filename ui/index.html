@@ -171,6 +171,11 @@
                   </div>
                 </div>
 
+                <div class="notice">
+                  <strong>Fluxo recomendado: destino existente</strong>
+                  <span>Crie antes uma app WordPress limpa no CapRover. O WP Clone vai configurar o volume, copiar os arquivos da origem e sobrescrever essa app destino.</span>
+                </div>
+
                 <div class="switch-row">
                   <label><input type="checkbox" name="sameSsh" checked /> Mesmo SSH da origem</label>
                   <label><input type="checkbox" name="sameCaprover" checked /> Mesmo CapRover da origem</label>
@@ -206,7 +211,7 @@
                     <input name="targetCaproverPassword" type="password" />
                   </label>
                   <label class="field">
-                    <span>Nova app</span>
+                    <span>App WordPress destino</span>
                     <input name="targetApp" placeholder="wordpress-clone" required />
                   </label>
                   <label class="field">
@@ -229,6 +234,11 @@
                   </div>
                 </div>
 
+                <div class="notice notice--danger">
+                  <strong>O MySQL destino sera substituido</strong>
+                  <span>Use uma app MySQL limpa e exclusiva para este clone. O banco informado sera apagado no destino e restaurado a partir da origem.</span>
+                </div>
+
                 <div class="field-grid">
                   <label class="field">
                     <span>MySQL root origem</span>
@@ -239,7 +249,7 @@
                     <input name="sourceMysqlPassword" type="password" required />
                   </label>
                   <label class="field">
-                    <span>Nova app MySQL destino</span>
+                    <span>App MySQL destino</span>
                     <input name="targetMysqlApp" placeholder="wordpress-clone-db" required />
                   </label>
                   <label class="field">
@@ -284,8 +294,8 @@
                     <span>Dry-run</span>
                   </label>
                   <label class="toggle">
-                    <input type="checkbox" name="allowExistingTarget" />
-                    <span>Usar apps existentes</span>
+                    <input type="checkbox" name="allowExistingTarget" checked />
+                    <span>Destino existente</span>
                   </label>
                   <button class="launch-button" id="simulateRun" type="button">Simular execução</button>
                   <button class="launch-button launch-button--danger" id="executeRun" type="button">Executar clonagem</button>
@@ -294,9 +304,9 @@
                 <ol class="mission-list" id="missionList">
                   <li>Preflight SSH/Docker</li>
                   <li>Descobrir app WordPress origem</li>
-                  <li>Criar app CapRover destino</li>
-                  <li>Criar app MySQL destino</li>
-                  <li>Deploy WordPress destino</li>
+                  <li>Confirmar app WordPress destino</li>
+                  <li>Confirmar app MySQL destino</li>
+                  <li>Configurar volume/env destino</li>
                   <li>Copiar arquivos</li>
                   <li>Dump e restore MySQL</li>
                   <li>Atualizar wp-config.php</li>

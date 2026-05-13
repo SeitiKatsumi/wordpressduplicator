@@ -715,7 +715,7 @@ async function createJob(request, response) {
       oldUrl,
       newUrl,
       execution.dryRun !== false,
-      Boolean(execution.allowExistingTarget),
+      execution.allowExistingTarget !== false,
       config,
       sanitize(source),
       sanitize(target),
@@ -795,10 +795,10 @@ function validateRunConfig(config) {
     return "Informe uma chave privada SSH origem completa ou um caminho de chave existente dentro do container.";
   }
   if (!caproverAppPattern.test(target.app || "")) {
-    return "Nome da nova app CapRover invalido. Use apenas letras, numeros e hifen, como wp-invest-caixa.";
+    return "Nome da app WordPress destino invalido. Use apenas letras, numeros e hifen, como wp-invest-caixa.";
   }
   if (!caproverAppPattern.test(database.targetMysqlApp || "")) {
-    return "Nome da nova app MySQL invalido. Use apenas letras, numeros e hifen, como wp-invest-caixa-db.";
+    return "Nome da app MySQL destino invalido. Use apenas letras, numeros e hifen, como wp-invest-caixa-db.";
   }
   return "";
 }

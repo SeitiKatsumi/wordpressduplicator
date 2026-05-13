@@ -89,7 +89,7 @@ def build_config(raw: dict) -> wizard.CloneConfig:
         target_db_name=value(database, "targetDbName"),
         target_db_user=value(database, "targetDbUser"),
         target_db_password=value(database, "targetDbPassword"),
-        allow_existing_target=boolean(execution, "allowExistingTarget", default=False),
+        allow_existing_target=boolean(execution, "allowExistingTarget", default=True),
         dry_run=boolean(execution, "dryRun", default=True),
     )
     wizard.validate_or_die(config)
